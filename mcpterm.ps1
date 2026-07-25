@@ -67,7 +67,19 @@ function Resolve-Session([string]$idOrName) {
         $hit = @($pool | Where-Object {
             $_.Sid -eq $idOrName -or $_.Sid.StartsWith($idOrName) -or $_.Info.name -eq $idOrName
         })
-        if ($hit.Count -eq 1) { return $hit[0] }
+        if ($hit.Count -eq 1) {
+            # index.json is a cache and can go stale under concurrent writers -
+            # state.json is authoritative for status/name.
+            try {
+                $sp = Join-Path $Root "sessions\$($hit[0].Sid)\state.json"
+                if (Test-Path $sp) {
+                    $live = Get-Content $sp -Raw | ConvertFrom-Json
+                    if ($live.status) { $hit[0].Info.status = $live.status }
+                    if ($live.name) { $hit[0].Info.name = $live.name }
+                }
+            } catch { }
+            return $hit[0]
+        }
         if ($hit.Count -gt 1) {
             $names = ($hit | ForEach-Object { "$($_.Sid.Substring(0,8)) [$($_.Info.name)]" }) -join ', '
             throw "Ambiguous id '$idOrName' - matches: $names"
