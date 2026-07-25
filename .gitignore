@@ -1,0 +1,12 @@
+# build output
+bin/
+obj/
+releases/
+
+# runtime / local state
+studio-data/
+*.user
+AGENT-ACTIVITY-LOG.md
+
+# retired development-era scripts (not part of the product)
+legacy/

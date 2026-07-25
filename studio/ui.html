@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Local-only UI: no remote code, no network access from this page.
+     Assets are vendored under vendor/ (xterm.js + addon-fit, MIT). -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>MCPTerminal Studio</title>
+<link rel="stylesheet" href="vendor/xterm.min.css">
+<style>
+  :root {
+    --bg: #18181b; --bg2: #1f1f23; --bg3: #26262b; --line: #33333a;
+    --fg: #d4d4d8; --dim: #8b8b93; --accent: #22d3ee; --green: #4ade80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg);
+    font: 13px 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  /* ---- top tabstrip: conversations ---- */
+  #tabs { display: flex; align-items: center; gap: 2px; background: var(--bg2);
+    border-bottom: 1px solid var(--line); padding: 6px 8px 0 8px; user-select: none; }
+  .tab { padding: 7px 16px 8px; border-radius: 7px 7px 0 0; cursor: pointer;
+    color: var(--dim); background: transparent; max-width: 280px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .tab:hover { color: var(--fg); }
+  .tab.active { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-bottom: 1px solid var(--bg); margin-bottom: -1px; }
+  #tabs .spacer { flex: 1; }
+  .tab.history { color: var(--dim); }
+  .tab.history.active { color: var(--accent); }
+
+  #main { display: flex; flex: 1; min-height: 0; }
+
+  /* ---- left: vertical terminal list ---- */
+  #side { width: 230px; min-width: 140px; max-width: 520px; background: var(--bg2);
+    display: flex; flex-direction: column; }
+  #dragbar { width: 5px; cursor: col-resize; background: var(--line); flex: none; }
+  #dragbar:hover, #dragbar.dragging { background: var(--accent); }
+  #side .head { display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; color: var(--dim); font-size: 11px; letter-spacing: .08em; }
+  #newBtns { display: flex; gap: 4px; }
+  #newBtns button { background: var(--bg3); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
+  #newBtns button:hover { border-color: var(--accent); color: var(--accent); }
+  #newBtns button.plus { color: var(--accent); border-color: var(--accent);
+    font-weight: bold; padding: 2px 9px; }
+  #termlist { flex: 1; overflow-y: auto; padding: 4px 6px; }
+  .trow { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border-radius: 7px; cursor: pointer; color: var(--dim); position: relative; }
+  .trow:hover { background: var(--bg3); color: var(--fg); }
+  .trow.active { background: var(--bg3); color: var(--fg); }
+  .trow .dot { width: 8px; height: 8px; border-radius: 50%; background: #3f3f46;
+    flex: none; transition: background .3s; }
+  .trow.activity .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .trow.controlled .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .trow.controlled.activity .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .trow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trow .unread { width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: transparent; }
+  .trow .unread.has { background: var(--accent); box-shadow: 0 0 5px var(--accent); }
+  .trow .sh { font-size: 10px; color: var(--dim); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; flex: none; }
+  .trow .x { visibility: hidden; color: var(--dim); flex: none; padding: 0 3px; }
+  .trow:hover .x { visibility: visible; }
+  .trow .x:hover { color: #f87171; }
+  .trow.closed { font-style: italic; }
+  .trow.closed .nm { color: #f87171; }
+  .trow.closed .dot { background: #7f1d1d !important; box-shadow: none !important; }
+
+  /* ---- terminal panes ---- */
+  #paneWrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #paneHead { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+    background: var(--bg2); border-bottom: 1px solid var(--line); font-size: 12px;
+    white-space: nowrap; overflow: hidden; }
+  #phName { color: var(--accent); font-weight: 600; }
+  .phdim { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+  .phchip { font-size: 10px; color: var(--dim); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+  .phspacer { flex: 1; }
+  #phStatus { font-weight: 600; }
+  #phStatus.ctl { color: var(--accent); }
+  #phStatus.idle { color: var(--green); }
+  #phStatus.disc { color: var(--dim); font-weight: 400; }
+  #panes { flex: 1; min-width: 0; background: #0c0c0e; position: relative; }
+  .pane { position: absolute; inset: 8px; display: none; }
+  .pane.active { display: block; }
+
+  /* ---- history ---- */
+  #history { flex: 1; display: none; flex-direction: column; min-width: 0; }
+  #history.active { display: flex; }
+  #history .bar { padding: 12px; border-bottom: 1px solid var(--line); }
+  #history input { width: 100%; background: var(--bg3); border: 1px solid var(--line);
+    border-radius: 7px; color: var(--fg); padding: 9px 12px; font-size: 13px; outline: none; }
+  #history input:focus { border-color: var(--accent); }
+  #histBody { flex: 1; display: flex; min-height: 0; }
+  #histResults { width: 45%; overflow-y: auto; border-right: 1px solid var(--line); }
+  .hres { padding: 9px 14px; border-bottom: 1px solid var(--bg3); cursor: pointer; }
+  .hres:hover { background: var(--bg3); }
+  .hres .meta { color: var(--accent); font-size: 11px; margin-bottom: 3px; }
+  .hres .txt { color: var(--dim); font-family: Consolas, monospace; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #histDoc { flex: 1; overflow: auto; padding: 14px; font-family: Consolas, monospace;
+    font-size: 12px; white-space: pre-wrap; color: var(--fg); }
+  .muted { color: var(--dim); padding: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tabs"></div>
+  <div id="main">
+    <div id="side">
+      <div class="head"><span>TERMINALS</span>
+        <span id="newBtns">
+          <button data-shell="pwsh" class="plus" title="New terminal (PowerShell 7)">+</button>
+          <button data-shell="pwsh" title="PowerShell 7">PS</button>
+          <button data-shell="cmd" title="Command Prompt">CMD</button>
+          <button data-shell="bash" title="Git Bash">GIT</button>
+          <button data-shell="bash-wsl" title="WSL bash">WSL</button>
+        </span>
+      </div>
+      <div id="termlist"></div>
+    </div>
+    <div id="dragbar"></div>
+    <div id="paneWrap">
+      <div id="paneHead">
+        <span id="phName">-</span>
+        <span id="phId" class="phdim"></span>
+        <span id="phShell" class="phchip"></span>
+        <span class="phspacer"></span>
+        <span id="phChat" class="phdim"></span>
+        <span id="phStatus"></span>
+      </div>
+      <div id="panes"></div>
+    </div>
+    <div id="history">
+      <div class="bar"><input id="q" placeholder="Search all past terminal history..." /></div>
+      <div id="histBody">
+        <div id="histResults"><div class="muted">Type to search every session transcript.</div></div>
+        <div id="histDoc" class="muted">Select a result to view its transcript.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/xterm.min.js"></script>
+<script src="vendor/addon-fit.min.js"></script>
+<script>
+const bridge = window.chrome?.webview;
+const terms = new Map();     // id -> {term,fit,el,row,name,shell,conv,controlAgo,activeAgo}
+let activeConv = 'Local';
+let activeTerm = null;
+let historyMode = false;
+
+const $tabs = document.getElementById('tabs');
+const $list = document.getElementById('termlist');
+const $panes = document.getElementById('panes');
+const $hist = document.getElementById('history');
+
+function send(o) { bridge?.postMessage(o); }
+
+// ---------------------------------------------------------------- rendering
+function convOf(t) { return t.conv && t.conv.length ? t.conv : 'Local'; }
+
+function renderTabs() {
+  const convs = [...new Set([...terms.values()].map(convOf))];
+  if (!convs.includes(activeConv) && convs.length) activeConv = convs[0];
+  $tabs.innerHTML = '';
+  for (const c of convs) {
+    const el = document.createElement('div');
+    el.className = 'tab' + (!historyMode && c === activeConv ? ' active' : '');
+    el.textContent = c;
+    el.title = c;
+    el.onclick = () => { historyMode = false; activeConv = c; renderAll(); };
+    $tabs.appendChild(el);
+  }
+  const sp = document.createElement('div'); sp.className = 'spacer'; $tabs.appendChild(sp);
+  const h = document.createElement('div');
+  h.className = 'tab history' + (historyMode ? ' active' : '');
+  h.textContent = 'History';
+  h.onclick = () => { historyMode = true; renderAll(); };
+  $tabs.appendChild(h);
+}
+
+function renderList() {
+  $list.innerHTML = '';
+  const visible = [...terms.values()].filter(t => convOf(t) === activeConv);
+  if (activeTerm && !visible.some(t => t.id === activeTerm)) activeTerm = visible[0]?.id ?? null;
+  if (!activeTerm && visible.length) activeTerm = visible[0].id;
+  for (const t of visible) {
+    const row = document.createElement('div');
+    row.className = 'trow' + (t.id === activeTerm ? ' active' : '')
+      + (t.closed ? ' closed' : '')
+      + (!t.closed && t.activeAgo >= 0 && t.activeAgo < 3 ? ' activity' : '')
+      + (!t.closed && t.controlAgo >= 0 && t.controlAgo < 120 ? ' controlled' : '');
+    row.innerHTML = `<span class="dot"></span><span class="nm">${t.name}</span>` +
+      `<span class="unread${t.unseen ? ' has' : ''}"></span>` +
+      `<span class="sh">${t.shell}</span><span class="x">&#10005;</span>`;
+    row.querySelector('.x').onclick = ev => {
+      ev.stopPropagation();
+      if (t.closed) {   // dismiss the tombstone locally
+        t.term.dispose(); t.el.remove(); terms.delete(t.id);
+        if (activeTerm === t.id) activeTerm = null;
+        renderAll();
+      } else send({ type: 'closeTerm', id: t.id });
+    };
+    row.onclick = () => { historyMode = false; activeTerm = t.id; t.unseen = false; renderAll(); };
+    row.ondblclick = () => {
+      const n = prompt('Rename terminal (name it for what it does):', t.name);
+      if (n && n.trim() && n.trim() !== t.name) send({ type: 'renameTerm', id: t.id, name: n.trim() });
+    };
+    t.row = row;
+    $list.appendChild(row);
+  }
+}
+
+function updatePaneHead() {
+  const t = terms.get(activeTerm);
+  const st = document.getElementById('phStatus');
+  if (!t) {
+    document.getElementById('phName').textContent = '-';
+    document.getElementById('phId').textContent = '';
+    document.getElementById('phShell').textContent = '';
+    document.getElementById('phChat').textContent = '';
+    st.textContent = ''; st.className = '';
+    return;
+  }
+  document.getElementById('phName').textContent = t.name;
+  document.getElementById('phId').textContent = t.shortId ?? '';
+  document.getElementById('phShell').textContent = t.shell;
+  const chat = t.conv && t.conv.length ? t.conv : '';
+  document.getElementById('phChat').textContent = chat ? 'chat: ' + chat : '';
+  if (t.closed) {
+    const who = t.closedReason === 'assistant' ? 'by the assistant'
+      : t.closedReason === 'user' ? 'by you' : '(shell exited)';
+    st.textContent = `CLOSED ${who}`; st.className = 'disc';
+    st.style.color = '#f87171';
+    return;
+  }
+  st.style.color = '';
+  if (t.controlAgo >= 0 && t.controlAgo < 120) {
+    st.textContent = `CONTROLLED - ${t.controlAgo}s ago`; st.className = 'ctl';
+  } else if (t.controlAgo >= 0) {
+    st.textContent = `connected - idle ${Math.floor(t.controlAgo / 60)}m`; st.className = 'idle';
+  } else {
+    st.textContent = 'DISCONNECTED'; st.className = 'disc';
+  }
+}
+
+function renderPanes() {
+  $hist.classList.toggle('active', historyMode);
+  document.getElementById('paneWrap').style.display = historyMode ? 'none' : 'flex';
+  document.getElementById('side').style.display = historyMode ? 'none' : 'flex';
+  document.getElementById('dragbar').style.display = historyMode ? 'none' : 'block';
+  updatePaneHead();
+  for (const t of terms.values()) {
+    t.el.classList.toggle('active', !historyMode && t.id === activeTerm);
+  }
+  if (!historyMode && activeTerm) {
+    const t = terms.get(activeTerm);
+    if (t) { requestAnimationFrame(() => { t.fit.fit(); t.term.focus();
+      send({ type: 'resize', id: t.id, cols: t.term.cols, rows: t.term.rows }); }); }
+  }
+}
+
+function renderAll() { renderTabs(); renderList(); renderPanes(); }
+
+// ---------------------------------------------------------------- terminals
+function addTerm(m) {
+  const el = document.createElement('div');
+  el.className = 'pane';
+  $panes.appendChild(el);
+  const term = new Terminal({
+    fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 14,
+    theme: { background: '#0c0c0e', foreground: '#d4d4d8', cursor: '#22d3ee' },
+    cursorBlink: true, scrollback: 8000, allowProposedApi: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(el);
+  term.onData(d => send({ type: 'input', id: m.id, dataB64: btoa(unescape(encodeURIComponent(d))) }));
+
+  // ---- clipboard: Windows Terminal conventions ----
+  const copySel = () => {
+    const s = term.getSelection();
+    if (s) navigator.clipboard.writeText(s).catch(() => {});
+  };
+  const pasteClip = () =>
+    navigator.clipboard.readText().then(t => { if (t) term.paste(t); }).catch(() => {});
+  term.onSelectionChange(() => { if (term.hasSelection()) copySel(); });   // copy on select
+  term.attachCustomKeyEventHandler(ev => {
+    if (ev.type !== 'keydown') return true;
+    const ctrl = ev.ctrlKey && !ev.altKey;
+    if (ctrl && ev.shiftKey && ev.code === 'KeyC') { copySel(); return false; }
+    if (ctrl && ev.code === 'KeyV') { pasteClip(); return false; }
+    if (ctrl && !ev.shiftKey && ev.code === 'KeyC' && term.hasSelection()) {
+      copySel(); term.clearSelection(); return false;   // selection -> copy, no ^C
+    }
+    return true;
+  });
+  el.addEventListener('contextmenu', ev => {
+    ev.preventDefault();
+    if (term.hasSelection()) { copySel(); term.clearSelection(); } else pasteClip();
+  });
+  terms.set(m.id, { id: m.id, name: m.name, shell: m.shell, shortId: m.shortId, term, fit, el,
+    conv: '', controlAgo: -1, activeAgo: -1, unseen: false });
+  activeTerm = m.id;
+  renderAll();
+}
+
+function b64ToBytes(b64) {
+  const bin = atob(b64); const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+// ---------------------------------------------------------------- messages
+bridge?.addEventListener('message', ev => {
+  const m = ev.data;
+  switch (m.type) {
+    case 'termAdded': addTerm(m); break;
+    case 'output': {
+      const t = terms.get(m.id);
+      if (t) {
+        t.term.write(b64ToBytes(m.b64));
+        // unseen-activity badge for terminals you are not looking at
+        if (m.id !== activeTerm || historyMode) {
+          if (!t.unseen) {
+            t.unseen = true;
+            t.row?.querySelector('.unread')?.classList.add('has');
+          }
+        }
+      }
+      break;
+    }
+    case 'termClosed': {
+      // tombstone: keep the frozen terminal + scrollback, style the row
+      // italic/red, record who closed it. The X dismisses it locally.
+      const t = terms.get(m.id);
+      if (t) { t.closed = true; t.closedReason = m.reason || 'exited'; }
+      renderAll();
+      break;
+    }
+    case 'status': {
+      const t = terms.get(m.id);
+      if (!t) break;
+      const conv = m.controller || '';
+      const convChanged = conv !== t.conv;
+      const nameChanged = m.name && m.name !== t.name;
+      if (nameChanged) t.name = m.name;
+      t.conv = conv; t.controlAgo = m.controlAgo; t.activeAgo = m.activeAgo;
+      if (nameChanged && !convChanged) { renderList(); updatePaneHead(); }
+      if (convChanged) renderAll();
+      else {
+        if (t.row) {
+          t.row.classList.toggle('activity', m.activeAgo >= 0 && m.activeAgo < 3);
+          t.row.classList.toggle('controlled', m.controlAgo >= 0 && m.controlAgo < 120);
+        }
+        if (m.id === activeTerm) updatePaneHead();
+      }
+      break;
+    }
+    case 'searchResults': showResults(m); break;
+    case 'historyDoc': document.getElementById('histDoc').textContent = m.text; break;
+    case 'error': console.error(m.text); break;
+  }
+});
+
+// ---------------------------------------------------------------- history
+let searchTimer = null;
+document.getElementById('q').addEventListener('input', ev => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => send({ type: 'search', q: ev.target.value }), 250);
+});
+
+function showResults(m) {
+  const box = document.getElementById('histResults');
+  box.innerHTML = '';
+  if (!m.results.length) {
+    box.innerHTML = '<div class="muted">No matches.</div>';
+    return;
+  }
+  for (const r of m.results) {
+    const el = document.createElement('div');
+    el.className = 'hres';
+    el.innerHTML = `<div class="meta">${r.name} &middot; ${r.created} &middot; line ${r.ln}</div>` +
+      `<div class="txt"></div>`;
+    el.querySelector('.txt').textContent = r.text;
+    el.onclick = () => send({ type: 'openHistory', sid: r.sid });
+    box.appendChild(el);
+  }
+}
+
+// ---------------------------------------------------------------- shell "+"
+for (const b of document.querySelectorAll('#newBtns button')) {
+  b.onclick = () => send({ type: 'newTerm', shell: b.dataset.shell });
+}
+
+// ---- resizable left nav ----
+const $side = document.getElementById('side');
+const $drag = document.getElementById('dragbar');
+$side.style.width = (localStorage.getItem('navWidth') || 230) + 'px';
+$drag.addEventListener('mousedown', ev => {
+  ev.preventDefault();
+  $drag.classList.add('dragging');
+  const move = e => {
+    const w = Math.min(520, Math.max(140, e.clientX));
+    $side.style.width = w + 'px';
+  };
+  const up = () => {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    $drag.classList.remove('dragging');
+    localStorage.setItem('navWidth', parseInt($side.style.width));
+    const t = terms.get(activeTerm);
+    if (t && !historyMode) { t.fit.fit(); send({ type: 'resize', id: t.id, cols: t.term.cols, rows: t.term.rows }); }
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+});
+
+window.addEventListener('resize', () => {
+  const t = terms.get(activeTerm);
+  if (t && !historyMode) { t.fit.fit(); send({ type: 'resize', id: t.id, cols: t.term.cols, rows: t.term.rows }); }
+});
+
+// clicking anywhere in the terminal area focuses the shell
+document.getElementById('panes').addEventListener('mousedown', () => {
+  const t = terms.get(activeTerm);
+  if (t && !historyMode) setTimeout(() => t.term.focus(), 0);
+});
+
+renderAll();
+send({ type: 'ready' });
+</script>
+</body>
+</html>
