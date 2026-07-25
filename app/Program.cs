@@ -45,7 +45,7 @@ internal static class Program
 
     // ------------------------------------------------------------------ state
     static readonly object OutLock = new();
-    static string Root, SessionId, Name, Shell, WslDistro, SessionDir, InboxDir, OutboxDir;
+    static string Root, SessionId, Name, Shell, WslDistro, Controller, SessionDir, InboxDir, OutboxDir;
     static string ScreenLog, TranscriptLog, AssistantLog, StateFile, IndexFile;
     static string ShortId => SessionId[..8];
 
@@ -70,6 +70,7 @@ internal static class Program
                 case "--root": Root = args[i + 1]; break;
                 case "--shell": shell = args[i + 1]; break;
                 case "--wsl-distro": WslDistro = args[i + 1]; break;
+                case "--controller": Controller = args[i + 1]; break;
             }
         }
         Root ??= IsWin
@@ -82,7 +83,7 @@ internal static class Program
         // If MCPTerminal Studio is running, integrate: hand this launch to the
         // app so the terminal opens inside it (unless --standalone is given).
         if (IsWin && !args.Contains("--standalone") &&
-            StudioBridge.TryRedirect(Root, Shell, name, cwd, WslDistro))
+            StudioBridge.TryRedirect(Root, Shell, name, cwd, WslDistro, Controller))
             return 0;
 
         SessionId = Guid.NewGuid().ToString();
@@ -95,7 +96,7 @@ internal static class Program
         Directory.CreateDirectory(OutboxDir);
         // Session logs contain everything printed in the terminal - keep them
         // owner-only on Unix (Windows inherits the restricted %LOCALAPPDATA% ACL).
-        if (!IsWin)
+        if (!OperatingSystem.IsWindows())
         {
             try
             {
@@ -167,6 +168,9 @@ internal static class Program
             ["mode"] = "native", ["status"] = "running",
             ["windowPid"] = Environment.ProcessId, ["createdAt"] = now,
         };
+        // Owning conversation, stamped at creation so a session is grouped
+        // (and claimable) from its very first moment.
+        if (!string.IsNullOrWhiteSpace(Controller)) state["controller"] = Controller;
         WriteJson(StateFile, state);
         MutateIndex(idx => idx[SessionId] = new JsonObject
         {

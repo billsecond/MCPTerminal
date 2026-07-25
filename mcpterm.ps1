@@ -142,6 +142,7 @@ switch ($Action) {
             if ($Name) { $exeArgs += @('--name', $Name) }
             if ($Cwd) { $exeArgs += @('--cwd', ('"{0}"' -f $Cwd)) }
             if ($WslDistro) { $exeArgs += @('--wsl-distro', $WslDistro) }
+            if ($Controller) { $exeArgs += @('--controller', ('"{0}"' -f $Controller)) }
             Start-Process $AppExe -ArgumentList $exeArgs | Out-Null
             if ($inStudio) { Write-Output "terminal opening inside MCPTerminal Studio (shell=$Shell)" }
             else { Write-Output "window launched (shell=$Shell) - the session code appears in its header/title" }
@@ -158,9 +159,18 @@ switch ($Action) {
                     $entry = $_.Value; $entry.status = 'closed'; Write-IndexEntry $_.Name $entry
                 }
             }
+            # controller = the conversation that owns this session. Read from
+            # state.json (authoritative) so assistants can tell whose it is and
+            # avoid hijacking another chat's terminal.
+            $ctrl = ''
+            try {
+                $sp = Join-Path $Root "sessions\$($_.Name)\state.json"
+                if (Test-Path $sp) { $ctrl = (Get-Content $sp -Raw | ConvertFrom-Json).controller }
+            } catch { }
             [pscustomobject]@{
                 Guid = $_.Name.Substring(0, 8); Name = $_.Value.name
                 Mode = $_.Value.mode ?? 'headless'; Shell = $_.Value.shell; Status = $status
+                Controller = if ($ctrl) { $ctrl } else { '(unclaimed)' }
                 Updated = $_.Value.updatedAt ?? $_.Value.createdAt
             }
         })

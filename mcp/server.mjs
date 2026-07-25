@@ -34,6 +34,7 @@ const TOOLS = [
         name: { type: 'string', description: 'Session name (auto-generated if omitted)' },
         cwd: { type: 'string', description: 'Starting directory' },
         wslDistro: { type: 'string', description: 'WSL distro for bash-wsl (e.g. Ubuntu)' },
+        controller: { type: 'string', description: 'Label for THIS chat/project - claims the session for this conversation and gives it its own tab in Studio. Always pass it.' },
       },
     },
   },
@@ -117,6 +118,7 @@ async function callTool(name, args = {}) {
       if (args.name) a.push('-Name', args.name);
       if (args.cwd) a.push('-Cwd', args.cwd);
       if (args.wslDistro) a.push('-WslDistro', args.wslDistro);
+      if (args.controller) a.push('-Controller', args.controller);
       return runCli(a);
     }
     case 'terminal_list':
@@ -196,10 +198,14 @@ async function handleLine(line) {
           'ROUTING: run ALL PowerShell, bash and cmd commands through these tools',
           '(terminal_exec) rather than any private shell, so the user can see them.',
           '',
-          'ORGANIZE + REUSE: call terminal_list first and reuse a running session that',
-          'fits; only terminal_new when none does. Pass a controller label describing',
-          'this chat/project (it groups terminals per conversation in Studio). Name',
-          'sessions for their purpose with terminal_rename.',
+          'ONE CONVERSATION = ITS OWN TERMINALS. terminal_list shows a Controller',
+          'column naming the chat that owns each session. Only reuse a session whose',
+          'Controller is THIS conversation (or "(unclaimed)"); never take over a',
+          "session owned by a different chat - the user is using it there. If nothing",
+          'suitable is free, call terminal_new. Always pass a controller label that',
+          'identifies this chat/project: it claims the session and gives this',
+          'conversation its own tab in Studio. Name sessions for their purpose with',
+          'terminal_rename, and reuse your own session for the rest of the task.',
           '',
           'CONNECTING: if the user pastes session info - text or a screenshot showing',
           '"session code: <name>" - do not deliberate, immediately call terminal_connect',

@@ -38,7 +38,8 @@ public sealed class StudioSession
         "gale", "harbor", "iris", "juniper", "koa", "lunar", "mesa", "nova", "onyx", "pine",
         "quartz", "ridge", "slate", "topaz", "umber", "vale", "willow", "zephyr" };
 
-    public static StudioSession Create(string root, string shell, string name, string cwd, string wslDistro)
+    public static StudioSession Create(string root, string shell, string name, string cwd, string wslDistro,
+        string controller = null)
     {
         var s = new StudioSession
         {
@@ -63,7 +64,7 @@ public sealed class StudioSession
 
         string initPath = Path.Combine(s.SessionDir, ShellSupport.InitFileName(s.Shell));
         ShellSupport.WriteInitScript(s.Shell, initPath, s.Name, s.Id, s.SessionDir, s._stateFile);
-        s.Register();
+        s.Register(controller);
 
         string cmdline = ShellSupport.BuildShellCommand(s.Shell, initPath, wslDistro, isWindows: true);
         s._pty = WindowsPty.Spawn(cmdline, cwd, 120, 30);
@@ -76,15 +77,18 @@ public sealed class StudioSession
     }
 
     // ------------------------------------------------------------- lifecycle
-    void Register()
+    void Register(string controller = null)
     {
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        WriteJson(_stateFile, new JsonObject
+        var state = new JsonObject
         {
             ["sessionId"] = Id, ["name"] = Name, ["shell"] = Shell,
             ["mode"] = "native", ["host"] = "studio", ["status"] = "running",
             ["windowPid"] = Environment.ProcessId, ["createdAt"] = now,
-        });
+        };
+        // owning conversation, stamped at creation so the tab exists immediately
+        if (!string.IsNullOrWhiteSpace(controller)) state["controller"] = controller;
+        WriteJson(_stateFile, state);
         MutateIndex(idx => idx[Id] = new JsonObject
         {
             ["name"] = Name, ["shell"] = Shell, ["mode"] = "native", ["host"] = "studio",

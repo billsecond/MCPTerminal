@@ -249,7 +249,8 @@ public static class TerminalSetup
 // =============================================================================
 public static class StudioBridge
 {
-    public static bool TryRedirect(string root, string shell, string name, string cwd, string wslDistro)
+    public static bool TryRedirect(string root, string shell, string name, string cwd, string wslDistro,
+        string controller = null)
     {
         try
         {
@@ -261,7 +262,7 @@ public static class StudioBridge
             var req = new JsonObject
             {
                 ["shell"] = shell, ["name"] = name ?? "", ["cwd"] = cwd ?? "",
-                ["wslDistro"] = wslDistro ?? "",
+                ["wslDistro"] = wslDistro ?? "", ["controller"] = controller ?? "",
             };
             string reqDir = Path.Combine(root, "requests");
             Directory.CreateDirectory(reqDir);

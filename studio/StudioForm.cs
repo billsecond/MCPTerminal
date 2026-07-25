@@ -179,10 +179,10 @@ public sealed class StudioForm : Form
     }
 
     // -------------------------------------------------------------- terminals
-    void CreateTerm(string shell, string name, string cwd, string wslDistro)
+    void CreateTerm(string shell, string name, string cwd, string wslDistro, string controller = null)
     {
         StudioSession s;
-        try { s = StudioSession.Create(_root, shell, name, cwd, wslDistro); }
+        try { s = StudioSession.Create(_root, shell, name, cwd, wslDistro, controller); }
         catch (Exception ex)
         {
             Post(new { type = "error", text = $"failed to start {shell}: {ex.Message}" });
@@ -245,7 +245,7 @@ public sealed class StudioForm : Form
             try { File.Delete(f); } catch { }
             if (req == null) continue;
             CreateTerm(req["shell"]?.GetValue<string>(), Null(req["name"]),
-                       Null(req["cwd"]), Null(req["wslDistro"]));
+                       Null(req["cwd"]), Null(req["wslDistro"]), Null(req["controller"]));
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
         }
