@@ -273,7 +273,15 @@ function addTerm(m) {
   $panes.appendChild(el);
   const term = new Terminal({
     fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 14,
-    theme: { background: '#0c0c0e', foreground: '#d4d4d8', cursor: '#22d3ee' },
+    theme: {
+      background: '#0c0c0e', foreground: '#d4d4d8', cursor: '#22d3ee',
+      // explicit 16-colour ANSI palette so SGR codes always have a colour to map to
+      black: '#3f3f46', red: '#f87171', green: '#4ade80', yellow: '#fbbf24',
+      blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#d4d4d8',
+      brightBlack: '#71717a', brightRed: '#fca5a5', brightGreen: '#86efac',
+      brightYellow: '#fde047', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe',
+      brightCyan: '#67e8f9', brightWhite: '#fafafa',
+    },
     cursorBlink: true, scrollback: 8000, allowProposedApi: true,
   });
   const fit = new FitAddon.FitAddon();

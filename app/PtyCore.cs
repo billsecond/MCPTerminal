@@ -42,6 +42,10 @@ public sealed class WindowsPty : IPtySession
 
     public static WindowsPty Spawn(string cmdline, string cwd, int w = 120, int h = 30)
     {
+        // Child processes decide whether to colourise by sniffing these. The
+        // spawned shell inherits our environment, so set them before spawning.
+        Environment.SetEnvironmentVariable("TERM", "xterm-256color");
+        Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
         CreatePipe(out var inRead, out var inWrite, IntPtr.Zero, 0);
         CreatePipe(out var outRead, out var outWrite, IntPtr.Zero, 0);
         int hr = CreatePseudoConsole(new COORD { X = (short)w, Y = (short)h }, inRead, outWrite, 0, out var hPC);
@@ -269,8 +273,23 @@ public static class StudioBridge
             string tmp = Path.Combine(reqDir, Guid.NewGuid().ToString("N") + ".tmp");
             File.WriteAllText(tmp, req.ToJsonString());
             File.Move(tmp, Path.ChangeExtension(tmp, ".newterm"));
+            try
+            {
+                File.AppendAllText(Path.Combine(root, "bridge.log"),
+                    $"{DateTime.Now:HH:mm:ss} redirect -> {req.ToJsonString()}\n");
+            }
+            catch { }
             return true;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(root, "bridge.log"),
+                    $"{DateTime.Now:HH:mm:ss} redirect FAILED: {ex.Message}\n");
+            }
+            catch { }
+            return false;
+        }
     }
 }

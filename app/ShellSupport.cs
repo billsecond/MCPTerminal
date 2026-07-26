@@ -108,6 +108,9 @@ public static class ShellSupport
         if (isPs)
         {
             File.WriteAllText(initPath, $@"
+# Always emit ANSI colour. PowerShell drops to PlainText whenever it thinks
+# stdout is not a terminal, which is what strips colour inside a pseudoconsole.
+try {{ $PSStyle.OutputRendering = 'Ansi' }} catch {{ }}
 Write-Host 'MCPTerminal ' -ForegroundColor Cyan -NoNewline
 Write-Host 'shared terminal - session code ' -NoNewline
 Write-Host '{name}' -ForegroundColor Cyan -NoNewline

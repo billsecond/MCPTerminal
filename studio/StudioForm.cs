@@ -185,6 +185,14 @@ public sealed class StudioForm : Form
         try { s = StudioSession.Create(_root, shell, name, cwd, wslDistro, controller); }
         catch (Exception ex)
         {
+            // Surface failures somewhere the user (and I) can actually read -
+            // a WebView console message is invisible in a shipped app.
+            try
+            {
+                File.AppendAllText(Path.Combine(_root, "studio-errors.log"),
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  CreateTerm(shell={shell}, name={name}, cwd={cwd}) failed:\n{ex}\n\n");
+            }
+            catch { }
             Post(new { type = "error", text = $"failed to start {shell}: {ex.Message}" });
             return;
         }
