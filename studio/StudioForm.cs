@@ -97,6 +97,7 @@ public sealed class StudioForm : Form
     async void OnLoad(object sender, EventArgs e)
     {
         File.WriteAllText(Path.Combine(_root, "studio.lock"), Environment.ProcessId.ToString());
+        ReapOrphans();
 
         var env = await CoreWebView2Environment.CreateAsync(null,
             Path.Combine(_root, "studio-data"));
@@ -180,6 +181,9 @@ public sealed class StudioForm : Form
                 break;
             case "openHistory":
                 OpenHistory(m["sid"]?.GetValue<string>() ?? "");
+                break;
+            case "historyList":
+                ListHistory();
                 break;
         }
     }
@@ -278,40 +282,256 @@ public sealed class StudioForm : Form
     }
 
     // ----------------------------------------------------- history + search
+    // Every past session, newest first, grouped by the conversation that owned
+    // it. This is what History shows before you type anything: browsing beats
+    // having to guess a search term to see what you did yesterday.
+    void ListHistory()
+    {
+        var sessions = new List<object>();
+        try
+        {
+            string root = Path.Combine(_root, "sessions");
+            if (Directory.Exists(root))
+            {
+                JsonObject index = null;
+                try
+                {
+                    string ip = Path.Combine(_root, "index.json");
+                    if (File.Exists(ip)) index = JsonNode.Parse(File.ReadAllText(ip)) as JsonObject;
+                }
+                catch { }
+
+                foreach (var d in new DirectoryInfo(root).GetDirectories()
+                             .OrderByDescending(d => d.CreationTimeUtc))
+                {
+                    string t = Path.Combine(d.FullName, "transcript.log");
+                    if (!File.Exists(t)) continue;
+                    long size = 0;
+                    try { size = new FileInfo(t).Length; } catch { }
+                    if (size == 0) continue;                 // nothing to read
+
+                    JsonObject st = null;
+                    try
+                    {
+                        string sp = Path.Combine(d.FullName, "state.json");
+                        if (File.Exists(sp)) st = JsonNode.Parse(File.ReadAllText(sp)) as JsonObject;
+                    }
+                    catch { }
+                    var e = index?[d.Name] as JsonObject;
+                    string tab = st?["tabLabel"]?.GetValue<string>()
+                        ?? st?["controller"]?.GetValue<string>() ?? "Local";
+                    // "running" in state.json only means nobody got to write
+                    // "closed" - a killed host leaves it behind. Trust the pid.
+                    string status = st?["status"]?.GetValue<string>() ?? "closed";
+                    if (status == "running" && !OwnerAlive(st)) status = "closed";
+                    sessions.Add(new
+                    {
+                        sid = d.Name,
+                        name = st?["name"]?.GetValue<string>() ?? e?["name"]?.GetValue<string>()
+                               ?? SessionNameFromState(d.FullName, d.Name),
+                        shell = st?["shell"]?.GetValue<string>() ?? e?["shell"]?.GetValue<string>() ?? "",
+                        status,
+                        created = st?["createdAt"]?.GetValue<string>()
+                                  ?? d.CreationTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                        tab,
+                        kb = Math.Max(1, size / 1024),
+                    });
+                }
+            }
+        }
+        catch (Exception ex) { LogError("ListHistory", ex); }
+        Post(new { type = "historySessions", sessions });
+    }
+
+    // Full-text search across every session transcript. One unreadable session
+    // must not sink the whole search, and nothing here may fail silently: a
+    // swallowed exception here looks exactly like "history is broken".
     void RunSearch(string q)
     {
         var results = new List<object>();
-        if (!string.IsNullOrWhiteSpace(q))
+        int scanned = 0, skipped = 0;
+        string note = null;
+
+        if (string.IsNullOrWhiteSpace(q))
         {
-            try
+            Post(new { type = "searchResults", q, results, note = (string)null });
+            return;
+        }
+
+        JsonObject index = null;
+        try
+        {
+            string ip = Path.Combine(_root, "index.json");
+            if (File.Exists(ip)) index = JsonNode.Parse(File.ReadAllText(ip)) as JsonObject;
+        }
+        catch { }                    // names fall back to the guid prefix
+
+        try
+        {
+            string sessions = Path.Combine(_root, "sessions");
+            if (!Directory.Exists(sessions))
             {
-                var index = File.Exists(Path.Combine(_root, "index.json"))
-                    ? JsonNode.Parse(File.ReadAllText(Path.Combine(_root, "index.json"))) as JsonObject
-                    : new JsonObject();
-                foreach (var dir in Directory.GetDirectories(Path.Combine(_root, "sessions"))
-                             .OrderByDescending(Directory.GetCreationTime))
+                Post(new { type = "searchResults", q, results, note = "no sessions folder yet" });
+                return;
+            }
+            var dirs = new DirectoryInfo(sessions).GetDirectories()
+                .OrderByDescending(d => d.CreationTimeUtc);
+            foreach (var d in dirs)
+            {
+                if (results.Count >= 300) { note = "showing the first 300 matches"; break; }
+                string t = Path.Combine(d.FullName, "transcript.log");
+                if (!File.Exists(t)) continue;
+                string sid = d.Name;
+                var entry = index?[sid] as JsonObject;
+                string name = entry?["name"]?.GetValue<string>() ?? SessionNameFromState(d.FullName, sid);
+                string created = entry?["createdAt"]?.GetValue<string>()
+                    ?? d.CreationTime.ToString("yyyy-MM-dd HH:mm:ss");
+                try
                 {
-                    string sid = Path.GetFileName(dir);
-                    string t = Path.Combine(dir, "transcript.log");
-                    if (!File.Exists(t)) continue;
-                    string name = (index?[sid] as JsonObject)?["name"]?.GetValue<string>() ?? sid[..8];
-                    string created = (index?[sid] as JsonObject)?["createdAt"]?.GetValue<string>() ?? "";
+                    scanned++;
                     int ln = 0;
-                    foreach (var line in File.ReadLines(t))
+                    // Share-read: the session writing this file right now still
+                    // has it open, and a plain ReadLines would throw.
+                    using var fs = new FileStream(t, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var r = new StreamReader(fs, Encoding.UTF8);
+                    string line;
+                    while ((line = r.ReadLine()) != null)
                     {
                         ln++;
                         if (line.Contains(q, StringComparison.OrdinalIgnoreCase))
                         {
-                            results.Add(new { sid, name, created, ln, text = line.Trim() });
-                            if (results.Count >= 200) break;
+                            results.Add(new { sid, name, created, ln, text = Clean(line) });
+                            if (results.Count >= 300) break;
                         }
                     }
-                    if (results.Count >= 200) break;
                 }
+                catch { skipped++; }
             }
-            catch { }
         }
-        Post(new { type = "searchResults", q, results });
+        catch (Exception ex)
+        {
+            LogError($"RunSearch(q={q})", ex);
+            Post(new { type = "searchResults", q, results, note = "search failed: " + ex.Message });
+            return;
+        }
+
+        if (note == null && skipped > 0) note = $"{skipped} session(s) could not be read";
+        if (note == null && results.Count == 0) note = $"no matches in {scanned} session transcript(s)";
+        Post(new { type = "searchResults", q, results, note });
+    }
+
+    // Is the process that owns this session still alive?
+    static bool OwnerAlive(JsonObject st)
+    {
+        try
+        {
+            var pidNode = st?["windowPid"] ?? st?["hostPid"];
+            if (pidNode == null) return false;
+            int pid = pidNode.GetValue<int>();
+            if (pid <= 0) return false;
+            using var p = Process.GetProcessById(pid);
+            return !p.HasExited;
+        }
+        catch { return false; }
+    }
+
+    // A Studio that was killed rather than closed leaves its sessions marked
+    // "running" forever, which makes them look live in History and in
+    // `mcpterm list`. Reap those once at startup.
+    void ReapOrphans()
+    {
+        try
+        {
+            string sessions = Path.Combine(_root, "sessions");
+            if (!Directory.Exists(sessions)) return;
+            int fixedUp = 0;
+            foreach (var d in Directory.GetDirectories(sessions))
+            {
+                string sp = Path.Combine(d, "state.json");
+                if (!File.Exists(sp)) continue;
+                try
+                {
+                    var st = JsonNode.Parse(File.ReadAllText(sp)) as JsonObject;
+                    if (st?["status"]?.GetValue<string>() != "running") continue;
+                    if (OwnerAlive(st)) continue;
+                    st["status"] = "closed";
+                    File.WriteAllText(sp, st.ToJsonString());
+                    fixedUp++;
+                    string ip = Path.Combine(_root, "index.json");
+                    if (File.Exists(ip) &&
+                        JsonNode.Parse(File.ReadAllText(ip)) as JsonObject is JsonObject idx &&
+                        idx[Path.GetFileName(d)] is JsonObject entry)
+                    {
+                        entry["status"] = "closed";
+                        File.WriteAllText(ip, idx.ToJsonString());
+                    }
+                }
+                catch { }
+            }
+            if (fixedUp > 0) LogInfo($"reaped {fixedUp} orphaned session(s) left as running");
+        }
+        catch (Exception ex) { LogError("ReapOrphans", ex); }
+    }
+
+    void LogInfo(string msg)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(_root, "studio-errors.log"),
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {msg}\n");
+        }
+        catch { }
+    }
+
+    static string SessionNameFromState(string dir, string sid)
+    {
+        try
+        {
+            string sp = Path.Combine(dir, "state.json");
+            if (File.Exists(sp))
+            {
+                var st = JsonNode.Parse(File.ReadAllText(sp)) as JsonObject;
+                string n = st?["name"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(n)) return n;
+            }
+        }
+        catch { }
+        return sid.Length >= 8 ? sid[..8] : sid;
+    }
+
+    // Transcript lines still carry the odd escape sequence; strip them so a
+    // result row shows the command, not ANSI noise.
+    static string Clean(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\x1b')
+            {
+                int j = i + 1;
+                if (j < s.Length && s[j] == '[')
+                {
+                    j++;
+                    while (j < s.Length && !char.IsLetter(s[j])) j++;
+                }
+                i = j;
+                continue;
+            }
+            if (c == '\r' || c == '\a') continue;
+            sb.Append(c);
+        }
+        return sb.ToString().Trim();
+    }
+
+    void LogError(string what, Exception ex)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(_root, "studio-errors.log"),
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {what} failed:\n{ex}\n\n");
+        }
+        catch { }
     }
 
     // Session ids come from the renderer; only ever accept a bare GUID so a
@@ -323,20 +543,29 @@ public sealed class StudioForm : Form
         if (!IsSafeSessionId(sid)) { Post(new { type = "historyDoc", sid, text = "(invalid session id)" }); return; }
         try
         {
-            string t = Path.Combine(_root, "sessions", sid, "transcript.log");
+            // Prefer screen.log: it still has the ANSI, so replaying it through
+            // xterm reproduces the session's real colours and layout. The
+            // stripped transcript is the fallback and reads as flat, gappy text.
+            string dir = Path.Combine(_root, "sessions", sid);
+            string t = Path.Combine(dir, "screen.log");
+            bool raw = File.Exists(t) && new FileInfo(t).Length > 0;
+            if (!raw) t = Path.Combine(dir, "transcript.log");
             if (!File.Exists(t)) { Post(new { type = "historyDoc", sid, text = "(no transcript)" }); return; }
-            var fi = new FileInfo(t);
-            string text;
-            const long cap = 512 * 1024;
-            if (fi.Length <= cap) text = File.ReadAllText(t);
-            else
+
+            // FileShare.ReadWrite is essential: a live session appends to this
+            // file, and a plain read loses the race with it.
+            using var fs = new FileStream(t, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            const long cap = 1024 * 1024;
+            bool truncated = fs.Length > cap;
+            if (truncated) fs.Position = fs.Length - cap;
+            var ms = new MemoryStream();
+            fs.CopyTo(ms);
+            var bytes = ms.ToArray();
+            Post(new
             {
-                using var fs = fi.OpenRead();
-                fs.Position = fi.Length - cap;
-                using var r = new StreamReader(fs, Encoding.UTF8);
-                text = "...[truncated]...\n" + r.ReadToEnd();
-            }
-            Post(new { type = "historyDoc", sid, text });
+                type = "historyDoc", sid, raw, truncated,
+                b64 = Convert.ToBase64String(bytes),
+            });
         }
         catch (Exception ex) { Post(new { type = "historyDoc", sid, text = $"(error: {ex.Message})" }); }
     }
@@ -360,9 +589,9 @@ internal static class StudioProgram
         }
 
         ApplicationConfiguration.Initialize();
-        // Shown on EVERY launch, by design: the user must re-accept that
-        // connected MCP clients get full control of this system.
-        if (!DisclaimerForm.ShowAndConfirm()) return;
+        // Shown on every launch by design - connected MCP clients get full
+        // control of this system - unless the user ticked "don't show again".
+        if (!DisclaimerForm.ShowAndConfirm(root)) return;
         Application.Run(new StudioForm(root));
     }
 }

@@ -14,17 +14,33 @@ public static class ShellSupport
     public const string Credits =
         "Designed & built by William Daugherty - william@daugherty.info - https://www.linkedin.com/in/wdaugherty/";
 
-    // Shell-appropriate session names: ps-1, cmd-2, wsl-1... next free number
-    // among currently-running sessions of the same kind.
+    // Short, silly, memorable session names: smug-owl-1, zippy-newt-2. With
+    // ~1500 word pairs a clash is unlikely, and the trailing number makes it
+    // impossible among sessions that are running at the same time. The shell is
+    // shown as its own chip in the UI, so the name doesn't need to encode it.
+    static readonly string[] Adjectives =
+    {
+        "wry", "smug", "spry", "brisk", "zesty", "dizzy", "jolly", "sassy", "moody",
+        "nifty", "perky", "quirky", "snappy", "wonky", "zippy", "bouncy", "chunky",
+        "fuzzy", "grumpy", "cranky", "plucky", "spicy", "salty", "giddy", "hasty",
+        "husky", "lofty", "mushy", "nutty", "peppy", "punchy", "silly", "snazzy",
+        "sneaky", "soggy", "sturdy", "swanky", "tipsy", "wacky", "weepy", "witty",
+        "woozy", "yappy", "zany", "cheeky", "chirpy", "clumsy", "drowsy", "feisty",
+    };
+    static readonly string[] Critters =
+    {
+        "yak", "owl", "newt", "mole", "crab", "toad", "wasp", "moth", "lynx", "mule",
+        "ibex", "kiwi", "wren", "vole", "slug", "clam", "hare", "mink", "seal", "swan",
+        "gnu", "emu", "ram", "bat", "cod", "elk", "fox", "hen", "jay", "koi", "pug",
+        "eel", "carp", "dodo", "finch", "gecko", "heron", "llama", "otter", "quail",
+    };
+
     public static string AutoName(string root, string shell)
     {
-        string tag = shell switch
-        {
-            "pwsh" => "ps", "powershell" => "ps5", "cmd" => "cmd",
-            "bash-wsl" => "wsl", "sh" => "sh",
-            "bash" => OperatingSystem.IsWindows() ? "git" : "bash",
-            _ => "term",
-        };
+        var rng = Random.Shared;
+        string combo = $"{Adjectives[rng.Next(Adjectives.Length)]}-{Critters[rng.Next(Critters.Length)]}";
+
+        // Numbers already taken by live sessions sharing this combo.
         var used = new System.Collections.Generic.HashSet<int>();
         try
         {
@@ -37,7 +53,8 @@ public static class ShellSupport
                     var e = kv.Value as System.Text.Json.Nodes.JsonObject;
                     if (e?["status"]?.GetValue<string>() != "running") continue;
                     string n = e?["name"]?.GetValue<string>() ?? "";
-                    if (n.StartsWith(tag + "-") && int.TryParse(n[(tag.Length + 1)..], out int v))
+                    if (n.StartsWith(combo + "-", StringComparison.Ordinal) &&
+                        int.TryParse(n[(combo.Length + 1)..], out int v))
                         used.Add(v);
                 }
             }
@@ -45,7 +62,7 @@ public static class ShellSupport
         catch { }
         int i = 1;
         while (used.Contains(i)) i++;
-        return $"{tag}-{i}";
+        return $"{combo}-{i}";
     }
 
     // Session names and distro names are interpolated into generated shell

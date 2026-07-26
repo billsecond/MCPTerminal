@@ -161,15 +161,6 @@ internal static class Program
     }
 
     // ---------------------------------------------------------------- session
-    static string AutoName()
-    {
-        string[] words = { "amber", "basil", "cedar", "delta", "ember", "flint",
-                           "gale", "harbor", "iris", "juniper", "koa", "lunar",
-                           "mesa", "nova", "onyx", "pine", "quartz", "ridge",
-                           "slate", "topaz", "umber", "vale", "willow", "zephyr" };
-        var rng = new Random();
-        return $"{words[rng.Next(words.Length)]}-{rng.Next(10, 99)}";
-    }
 
     static void RegisterSession()
     {

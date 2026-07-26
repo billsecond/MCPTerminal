@@ -13,6 +13,42 @@ namespace MCPTerminal.Studio;
 
 public sealed class DisclaimerForm : Form
 {
+    // Remembered choice lives next to the other Studio UI state. Only an
+    // explicit Accept-with-the-box-ticked writes it, so the warning is never
+    // suppressed by anything the user did not deliberately do.
+    static string SettingsFile(string root) => Path.Combine(root, "studio-settings.json");
+
+    public static bool IsSuppressed(string root)
+    {
+        try
+        {
+            string p = SettingsFile(root);
+            if (!File.Exists(p)) return false;
+            var o = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(p))
+                as System.Text.Json.Nodes.JsonObject;
+            return o?["suppressDisclaimer"]?.GetValue<bool>() == true;
+        }
+        catch { return false; }
+    }
+
+    static void SetSuppressed(string root, bool value)
+    {
+        try
+        {
+            string p = SettingsFile(root);
+            var o = File.Exists(p)
+                ? System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(p)) as System.Text.Json.Nodes.JsonObject
+                : new System.Text.Json.Nodes.JsonObject();
+            o ??= new System.Text.Json.Nodes.JsonObject();
+            o["suppressDisclaimer"] = value;
+            o["acceptedAt"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            File.WriteAllText(p, o.ToJsonString());
+        }
+        catch { }
+    }
+
+    CheckBox _dontShow;
+
     // Both logos ship as embedded resources so the dialog never depends on
     // files sitting next to the exe.
     public static Image LoadLogo(string logicalName)
@@ -108,6 +144,23 @@ public sealed class DisclaimerForm : Form
             Padding = new Padding(24, 4, 24, 4),
         };
 
+        // AutoSize so the control is exactly box + label: clicking the text
+        // toggles it, which is what anyone expects from a checkbox caption.
+        _dontShow = new CheckBox
+        {
+            Text = "Don't show this warning again on this computer",
+            AutoSize = true,
+            Location = new Point(24, 7),
+            ForeColor = Color.FromArgb(170, 170, 178),
+            Font = new Font("Segoe UI", 9f),
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            TextAlign = ContentAlignment.MiddleLeft,
+            CheckAlign = ContentAlignment.MiddleLeft,
+        };
+        var suppressRow = new Panel { Dock = DockStyle.Bottom, Height = 34 };
+        suppressRow.Controls.Add(_dontShow);
+
         var buttons = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -149,6 +202,7 @@ public sealed class DisclaimerForm : Form
 
         Controls.Add(body);
         Controls.Add(buttons);
+        Controls.Add(suppressRow);
         Controls.Add(title);
         Controls.Add(brand);
 
@@ -177,10 +231,14 @@ public sealed class DisclaimerForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     static extern bool FlashWindow(IntPtr hwnd, bool invert);
 
-    // True only when the user explicitly accepted.
-    public static bool ShowAndConfirm()
+    // True when the user accepted - or accepted earlier and asked not to be
+    // shown it again. Declining never records anything.
+    public static bool ShowAndConfirm(string root)
     {
+        if (IsSuppressed(root)) return true;
         using var f = new DisclaimerForm();
-        return f.ShowDialog() == DialogResult.OK;
+        bool ok = f.ShowDialog() == DialogResult.OK;
+        if (ok && f._dontShow.Checked) SetSuppressed(root, true);
+        return ok;
     }
 }

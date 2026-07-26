@@ -155,7 +155,18 @@
   #histResults { width: 45%; overflow-y: auto; border-right: 1px solid var(--line); }
   .hres { padding: 9px 14px; border-bottom: 1px solid var(--bg3); cursor: pointer; }
   .hres:hover { background: var(--bg3); }
+  .hres.sel { background: var(--bg3); border-left: 2px solid var(--accent); }
   .hres .meta { color: var(--accent); font-size: 11px; margin-bottom: 3px; }
+  /* conversation group headers in the browse list */
+  .hgroup { padding: 9px 14px 5px; color: var(--dim); font-size: 10px;
+    letter-spacing: .09em; text-transform: uppercase; background: var(--bg2);
+    position: sticky; top: 0; border-bottom: 1px solid var(--line); }
+  .hrow { display: flex; align-items: baseline; gap: 8px; }
+  .hrow .nm { color: var(--fg); }
+  .hrow .sh { font-size: 10px; color: var(--dim); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0 5px; }
+  .hrow .when { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .hrow .live { color: var(--green); font-size: 10px; }
   .hres .txt { color: var(--dim); font-family: Consolas, monospace; font-size: 12px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #histDoc { flex: 1; overflow: auto; padding: 14px; font-family: Consolas, monospace;
@@ -193,10 +204,10 @@
       <div id="panes"></div>
     </div>
     <div id="history">
-      <div class="bar"><input id="q" placeholder="Search all past terminal history..." /></div>
+      <div class="bar"><input id="q" placeholder="Search all past terminal history (or just pick one below)..." /></div>
       <div id="histBody">
-        <div id="histResults"><div class="muted">Type to search every session transcript.</div></div>
-        <div id="histDoc" class="muted">Select a result to view its transcript.</div>
+        <div id="histResults"><div class="muted">Loading past terminals...</div></div>
+        <div id="histDoc" class="muted">Pick a terminal on the left to read its transcript.</div>
       </div>
     </div>
   </div>
@@ -234,11 +245,16 @@ function send(o) { bridge?.postMessage(o); }
 // ---------------------------------------------------------------- rendering
 function convOf(t) { return t.conv && t.conv.length ? t.conv : 'Local'; }
 
-// A terminal counts as INTERACTING while output is flowing, and stays lit for
-// a further second so short bursts are still visible rather than a flicker.
+// The green light means AN ASSISTANT is interacting - not you. Your own typing
+// produces output too, and lighting up for that just tells you what you already
+// know, so output only counts while an assistant is connected to the session.
+// (Assistants still see everything you typed via terminal_read; this is purely
+// about what the light claims.)
 const LIVE_TAIL_MS = 1000;
+const CONNECTED_SECS = 120;
+function isConnected(t) { return !t.closed && t.controlAgo >= 0 && t.controlAgo < CONNECTED_SECS; }
 function isLive(t) {
-  if (t.closed) return false;
+  if (!isConnected(t)) return false;
   if (t.liveUntil && Date.now() < t.liveUntil) return true;
   return t.activeAgo >= 0 && t.activeAgo < 3;
 }
@@ -246,7 +262,7 @@ function convState(c) {
   const own = [...terms.values()].filter(t => convOf(t) === c);
   return {
     live: own.some(isLive),
-    idle: own.some(t => !t.closed && t.controlAgo >= 0),
+    idle: own.some(isConnected),      // amber only while an assistant is still connected
     unseen: own.some(t => t.unseen),
   };
 }
@@ -280,7 +296,9 @@ function renderTabs() {
   const h = document.createElement('div');
   h.className = 'tab history' + (historyMode ? ' active' : '');
   h.textContent = 'History';
-  h.onclick = () => { historyMode = true; renderAll(); };
+  // Refresh the browse list each time History is opened so terminals closed
+  // since the last visit show up.
+  h.onclick = () => { historyMode = true; send({ type: 'historyList' }); renderAll(); };
   $tabs.appendChild(h);
 
   // Too many conversations to fit? Collapse them into a dropdown showing the
@@ -623,24 +641,126 @@ bridge?.addEventListener('message', ev => {
       break;
     }
     case 'searchResults': showResults(m); break;
-    case 'historyDoc': document.getElementById('histDoc').textContent = m.text; break;
+    case 'historySessions':
+      histSessions = m.sessions || [];
+      if (!document.getElementById('q').value.trim()) renderHistList();
+      break;
+    case 'historyDoc': showHistoryDoc(m); break;
     case 'error': console.error(m.text); break;
   }
 });
 
 // ---------------------------------------------------------------- history
 let searchTimer = null;
+let histSessions = [];      // every past terminal, newest first
+let histSel = null;
+
 document.getElementById('q').addEventListener('input', ev => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => send({ type: 'search', q: ev.target.value }), 250);
+  const v = ev.target.value;
+  // Empty box goes back to browsing rather than showing nothing.
+  if (!v.trim()) { renderHistList(); return; }
+  searchTimer = setTimeout(() => send({ type: 'search', q: v }), 250);
 });
+
+// Browse view: past terminals grouped by the conversation that owned them.
+function renderHistList() {
+  const box = document.getElementById('histResults');
+  box.innerHTML = '';
+  if (!histSessions.length) {
+    box.innerHTML = '<div class="muted">No past terminals recorded yet.</div>';
+    return;
+  }
+  const groups = new Map();
+  for (const s of histSessions) {
+    const g = s.tab || 'Local';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(s);
+  }
+  for (const [g, list] of groups) {
+    const h = document.createElement('div');
+    h.className = 'hgroup';
+    h.textContent = `${g}  (${list.length})`;
+    box.appendChild(h);
+    for (const s of list) {
+      const el = document.createElement('div');
+      el.className = 'hres' + (histSel === s.sid ? ' sel' : '');
+      el.innerHTML = '<div class="hrow"><span class="nm"></span><span class="sh"></span>' +
+                     '<span class="live"></span><span class="when"></span></div>' +
+                     '<div class="txt"></div>';
+      el.querySelector('.nm').textContent = s.name;
+      el.querySelector('.sh').textContent = s.shell;
+      el.querySelector('.live').textContent = s.status === 'running' ? '● live' : '';
+      el.querySelector('.when').textContent = s.created;
+      el.querySelector('.txt').textContent = `${s.sid.slice(0, 8)} · ${s.kb} KB`;
+      el.onclick = () => { histSel = s.sid; renderHistList(); send({ type: 'openHistory', sid: s.sid }); };
+      box.appendChild(el);
+    }
+  }
+}
+
+// The transcript viewer is a real xterm instance replaying the session's raw
+// output, so colours and cursor movement look the way they did live. Plain
+// (already-stripped) text is shown as-is with runs of blank lines collapsed.
+let histTerm = null;
+function histViewer() {
+  if (histTerm) return histTerm;
+  const host = document.getElementById('histDoc');
+  host.textContent = '';
+  host.classList.remove('muted');
+  host.style.padding = '6px';
+  histTerm = new Terminal({
+    fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 13,
+    theme: {
+      background: '#0c0c0e', foreground: '#d4d4d8', cursor: '#0c0c0e',
+      black: '#3f3f46', red: '#f87171', green: '#4ade80', yellow: '#fbbf24',
+      blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#d4d4d8',
+      brightBlack: '#71717a', brightRed: '#fca5a5', brightGreen: '#86efac',
+      brightYellow: '#fde047', brightBlue: '#93c5fd', brightMagenta: '#d8b4fe',
+      brightCyan: '#67e8f9', brightWhite: '#fafafa',
+    },
+    cursorBlink: false, disableStdin: true, scrollback: 20000, convertEol: true,
+  });
+  histTerm.__fit = new FitAddon.FitAddon();
+  histTerm.loadAddon(histTerm.__fit);
+  histTerm.open(host);
+  requestAnimationFrame(() => histTerm.__fit.fit());
+  return histTerm;
+}
+
+function showHistoryDoc(m) {
+  const term = histViewer();
+  term.reset();
+  if (m.text !== undefined) { term.write(m.text.replace(/\n{3,}/g, '\n\n')); return; }
+  if (m.truncated) term.write('\x1b[90m...[showing the last 1 MB]...\x1b[0m\r\n');
+  let bytes = b64ToBytes(m.b64);
+  if (!m.raw) {
+    // stripped transcript: collapse the blank-line runs the PTY leaves behind
+    const s = new TextDecoder().decode(bytes).replace(/\n{3,}/g, '\n\n');
+    bytes = new TextEncoder().encode(s);
+  }
+  term.write(bytes);
+  requestAnimationFrame(() => { term.__fit.fit(); term.scrollToTop(); });
+}
 
 function showResults(m) {
   const box = document.getElementById('histResults');
   box.innerHTML = '';
   if (!m.results.length) {
-    box.innerHTML = '<div class="muted">No matches.</div>';
+    // Say WHY there is nothing, rather than a bare "No matches" that could
+    // equally mean the search itself fell over.
+    const d = document.createElement('div');
+    d.className = 'muted';
+    d.textContent = m.note || 'No matches.';
+    box.appendChild(d);
     return;
+  }
+  if (m.note) {
+    const n = document.createElement('div');
+    n.className = 'muted';
+    n.style.padding = '8px 14px';
+    n.textContent = m.note;
+    box.appendChild(n);
   }
   for (const r of m.results) {
     const el = document.createElement('div');
@@ -690,6 +810,7 @@ $drag.addEventListener('mousedown', ev => {
 window.addEventListener('resize', () => {
   const t = terms.get(activeTerm);
   if (t && !historyMode) { t.fit.fit(); send({ type: 'resize', id: t.id, cols: t.term.cols, rows: t.term.rows }); }
+  if (historyMode && histTerm) histTerm.__fit.fit();
 });
 
 // clicking anywhere in the terminal area focuses the shell
@@ -700,6 +821,7 @@ document.getElementById('panes').addEventListener('mousedown', () => {
 
 renderAll();
 send({ type: 'ready' });
+send({ type: 'historyList' });   // so History is browsable the moment it opens
 </script>
 </body>
 </html>

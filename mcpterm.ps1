@@ -86,9 +86,15 @@ function New-AccessKey {
 
 function Assert-Access($s, [string]$supplied) {
     if (Test-KeyMatch $s.Sid $supplied) { return }
-    throw ("Access denied for '$($s.Info.name)' - it belongs to another conversation. " +
-           'Ask the user for its access key (shown in the terminal window, or by running ' +
-           '`info` there) and pass it as -Key, or create your own terminal with `new`.')
+    # A plain message, not a PowerShell exception: this text is what an
+    # assistant reads back, and a stack trace only invites a retry.
+    Write-Output "ACCESS DENIED - '$($s.Info.name)' belongs to another conversation."
+    if ($supplied) { Write-Output '  The key you supplied does not open it.' }
+    else { Write-Output '  You supplied no access key.' }
+    Write-Output '  Ask the user for this terminal''s access key - it is shown in the terminal'
+    Write-Output '  window header, by running `info` in it, and on the pane header in Studio.'
+    Write-Output '  Or run `new` to get your own terminal with its own key. Do not retry blindly.'
+    exit 4
 }
 
 function Resolve-Session([string]$idOrName, [string]$suppliedKey) {

@@ -37,10 +37,6 @@ public sealed class StudioSession
     public event Action<StudioSession> Exited;
     public string ClosedReason { get; private set; } = "exited";   // exited | assistant | user
 
-    static readonly string[] Words = { "amber", "basil", "cedar", "delta", "ember", "flint",
-        "gale", "harbor", "iris", "juniper", "koa", "lunar", "mesa", "nova", "onyx", "pine",
-        "quartz", "ridge", "slate", "topaz", "umber", "vale", "willow", "zephyr" };
-
     // trusted: the user created this from Studio's own UI, so it may join the
     // named tab without presenting that tab's key. Requests arriving from the
     // CLI / an MCP client are untrusted and must supply accessKey, otherwise
