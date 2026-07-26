@@ -184,7 +184,7 @@ public sealed class StudioSession
 
     void InboxPump()
     {
-        Thread.Sleep(1500);
+        Thread.Sleep(600);          // brief grace while the shell boots
         bool bashLike = Shell is "bash" or "bash-wsl" or "sh";
         while (_running)
         {
@@ -221,7 +221,7 @@ public sealed class StudioSession
                     {
                         _pty.Input.WriteByte(bashLike ? (byte)0x15 : (byte)0x1B);   // clear half-typed line
                         _pty.Input.Flush();
-                        Thread.Sleep(80);
+                        Thread.Sleep(30);
                         var bytes = Encoding.UTF8.GetBytes(cmd + "\r");
                         _pty.Input.Write(bytes, 0, bytes.Length);
                         _pty.Input.Flush();
@@ -240,7 +240,7 @@ public sealed class StudioSession
                 }
             }
             catch { }
-            Thread.Sleep(200);
+            Thread.Sleep(50);       // responsive pickup of assistant commands
         }
     }
 

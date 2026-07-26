@@ -28,6 +28,18 @@
   .tab.active { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-bottom: 1px solid var(--bg); margin-bottom: -1px; }
   #tabs .spacer { flex: 1; }
+  #tabs { overflow: hidden; }
+  .tabwrap { position: relative; }
+  .tab.picker { cursor: pointer; max-width: 420px; }
+  .tabmenu { display: none; position: absolute; top: 100%; left: 0; z-index: 40;
+    min-width: 260px; max-width: 460px; max-height: 60vh; overflow-y: auto;
+    background: var(--bg2); border: 1px solid var(--line); border-radius: 0 6px 6px 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 4px; }
+  .tabmenu.open { display: block; }
+  .tabmenu-item { padding: 7px 12px; border-radius: 5px; color: var(--dim);
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tabmenu-item:hover { background: var(--bg3); color: var(--fg); }
+  .tabmenu-item.current { color: var(--accent); }
   .tab.history { color: var(--dim); }
   .tab.history.active { color: var(--accent); }
 
@@ -167,20 +179,55 @@ function renderTabs() {
   const convs = [...new Set([...terms.values()].map(convOf))];
   if (!convs.includes(activeConv) && convs.length) activeConv = convs[0];
   $tabs.innerHTML = '';
-  for (const c of convs) {
+
+  const mkTab = (c) => {
     const el = document.createElement('div');
     el.className = 'tab' + (!historyMode && c === activeConv ? ' active' : '');
     el.textContent = c;
     el.title = c;
     el.onclick = () => { historyMode = false; activeConv = c; renderAll(); };
-    $tabs.appendChild(el);
-  }
+    return el;
+  };
+
+  for (const c of convs) $tabs.appendChild(mkTab(c));
   const sp = document.createElement('div'); sp.className = 'spacer'; $tabs.appendChild(sp);
   const h = document.createElement('div');
   h.className = 'tab history' + (historyMode ? ' active' : '');
   h.textContent = 'History';
   h.onclick = () => { historyMode = true; renderAll(); };
   $tabs.appendChild(h);
+
+  // Too many conversations to fit? Collapse them into a dropdown showing the
+  // active one, so the strip never overflows or squeezes the History tab out.
+  requestAnimationFrame(() => {
+    if (convs.length < 2 || $tabs.scrollWidth <= $tabs.clientWidth) return;
+    $tabs.innerHTML = '';
+    const picker = document.createElement('div');
+    picker.className = 'tab active picker';
+    picker.textContent = (historyMode ? 'Conversations' : activeConv) + '  ▾';
+    picker.title = 'Switch conversation';
+    const menu = document.createElement('div');
+    menu.className = 'tabmenu';
+    for (const c of convs) {
+      const item = document.createElement('div');
+      item.className = 'tabmenu-item' + (c === activeConv ? ' current' : '');
+      item.textContent = c;
+      item.onclick = (ev) => {
+        ev.stopPropagation();
+        historyMode = false; activeConv = c; menu.classList.remove('open'); renderAll();
+      };
+      menu.appendChild(item);
+    }
+    picker.onclick = (ev) => { ev.stopPropagation(); menu.classList.toggle('open'); };
+    document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
+    const wrap = document.createElement('div');
+    wrap.className = 'tabwrap';
+    wrap.appendChild(picker);
+    wrap.appendChild(menu);
+    $tabs.appendChild(wrap);
+    const sp2 = document.createElement('div'); sp2.className = 'spacer'; $tabs.appendChild(sp2);
+    $tabs.appendChild(h);
+  });
 }
 
 function renderList() {
@@ -402,7 +449,13 @@ function showResults(m) {
 
 // ---------------------------------------------------------------- shell "+"
 for (const b of document.querySelectorAll('#newBtns button')) {
-  b.onclick = () => send({ type: 'newTerm', shell: b.dataset.shell });
+  // New terminals join the tab you started them from, rather than dropping
+  // into Local as unclaimed.
+  b.onclick = () => send({
+    type: 'newTerm',
+    shell: b.dataset.shell,
+    controller: (!historyMode && activeConv && activeConv !== 'Local') ? activeConv : '',
+  });
 }
 
 // ---- resizable left nav ----

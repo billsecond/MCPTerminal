@@ -110,6 +110,18 @@ const TOOLS = [
   },
 ];
 
+// Every mutating call returns the current terminal roster, so the model always
+// knows what exists, who owns it, and what each one is doing - without having
+// to remember or call terminal_list again.
+async function withState(res) {
+  try {
+    const list = await runCli(['list']);
+    return { ...res, text: `${res.text}\n\n--- terminals now ---\n${list.text}` };
+  } catch {
+    return res;
+  }
+}
+
 async function callTool(name, args = {}) {
   switch (name) {
     case 'terminal_new': {
@@ -119,20 +131,20 @@ async function callTool(name, args = {}) {
       if (args.cwd) a.push('-Cwd', args.cwd);
       if (args.wslDistro) a.push('-WslDistro', args.wslDistro);
       if (args.controller) a.push('-Controller', args.controller);
-      return runCli(a);
+      return withState(await runCli(a));
     }
     case 'terminal_list':
       return runCli(['list']);
     case 'terminal_connect': {
       const a = ['connect', '-Id', args.id];
       if (args.controller) a.push('-Controller', args.controller);
-      return runCli(a);
+      return withState(await runCli(a));
     }
     case 'terminal_exec': {
       const a = ['exec', '-Id', args.id, '-Command', args.command];
       if (args.controller) a.push('-Controller', args.controller);
       if (args.timeoutSec) a.push('-TimeoutSec', String(args.timeoutSec));
-      return runCli(a);
+      return withState(await runCli(a));
     }
     case 'terminal_keys':
       return runCli(['keys', '-Id', args.id, '-Keys', args.keys]);
@@ -198,14 +210,23 @@ async function handleLine(line) {
           'ROUTING: run ALL PowerShell, bash and cmd commands through these tools',
           '(terminal_exec) rather than any private shell, so the user can see them.',
           '',
+          'IDENTIFY YOURSELF - do this once, before any other terminal call:',
+          'compose a controller id of the form "<chat title> - <4 hex chars you',
+          'generate>", e.g. "Payments API refactor - 9c2f". Use the conversation title',
+          'the user sees in their chat list. Generate the suffix yourself, once, and',
+          'then pass that EXACT SAME string as `controller` on EVERY terminal_new,',
+          'terminal_connect and terminal_exec call for the rest of the conversation.',
+          'It is this conversation\'s identity: Studio groups all terminals sharing a',
+          'controller under one top tab, so a stable id keeps your terminals together',
+          'and stops other chats from landing in your tab.',
+          '',
           'ONE CONVERSATION = ITS OWN TERMINALS. terminal_list shows a Controller',
-          'column naming the chat that owns each session. Only reuse a session whose',
-          'Controller is THIS conversation (or "(unclaimed)"); never take over a',
-          "session owned by a different chat - the user is using it there. If nothing",
-          'suitable is free, call terminal_new. Always pass a controller label that',
-          'identifies this chat/project: it claims the session and gives this',
-          'conversation its own tab in Studio. Name sessions for their purpose with',
-          'terminal_rename, and reuse your own session for the rest of the task.',
+          'column naming the chat that owns each session - consult it before acting.',
+          'Only use sessions whose Controller is YOUR id (or "(unclaimed)"); never',
+          'touch one owned by a different chat, the user is working in it there. If',
+          'none of yours fits, call terminal_new - having several terminals is normal',
+          'and encouraged: keep one per concern (build, tests, logs, git) and rotate',
+          'between them by id. Name each for its purpose with terminal_rename.',
           '',
           'CONNECTING: if the user pastes session info - text or a screenshot showing',
           '"session code: <name>" - do not deliberate, immediately call terminal_connect',
@@ -213,6 +234,13 @@ async function handleLine(line) {
           '',
           'Use terminal_read to see what the user typed; terminal_keys for interactive',
           'prompts and TUI apps (e.g. "Y{ENTER}", "{CTRL+C}").',
+          '',
+          'ACT, DO NOT DELIBERATE. These calls are cheap and local. Every mutating',
+          'call returns the current terminal roster (name, shell, owner, and what',
+          'each one is doing), so you always know the state without re-checking:',
+          'just make the call. Terminals marked "(unclaimed / user)" are the user\'s',
+          'own - you may take one over at any time by passing your controller id,',
+          'and you can read what they have been doing there with terminal_read.',
         ].join('\n'),
       },
     });

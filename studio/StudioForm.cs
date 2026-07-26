@@ -154,7 +154,8 @@ public sealed class StudioForm : Form
                 break;
             case "newTerm":
                 CreateTerm(m["shell"]?.GetValue<string>(), m["name"]?.GetValue<string>(),
-                           m["cwd"]?.GetValue<string>(), m["wslDistro"]?.GetValue<string>());
+                           m["cwd"]?.GetValue<string>(), m["wslDistro"]?.GetValue<string>(),
+                           m["controller"]?.GetValue<string>());
                 break;
             case "input":
                 if (_sessions.TryGetValue(m["id"]?.GetValue<string>() ?? "", out var si))

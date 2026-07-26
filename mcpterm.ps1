@@ -142,6 +142,8 @@ switch ($Action) {
             # opens integrated inside the app (the exe hands itself over via
             # the requests folder); otherwise a standalone window opens.
             if (-not $AppExe) { throw 'MCPTerminal.exe not found - build or install it first.' }
+            # Is Studio up? The lock file can go stale (e.g. Studio was killed
+            # rather than closed), so fall back to looking for the process.
             $studioLock = Join-Path $Root 'studio.lock'
             $inStudio = $false
             if (Test-Path $studioLock) {
@@ -150,14 +152,57 @@ switch ($Action) {
                     if (Get-Process -Id $spid -ErrorAction SilentlyContinue) { $inStudio = $true }
                 } catch { }
             }
+            if (-not $inStudio -and (Get-Process MCPTerminalStudio -ErrorAction SilentlyContinue)) {
+                $inStudio = $true
+            }
+            if ($inStudio) {
+                # Studio is running: ask it directly. Writing the request here
+                # (instead of launching the app just so IT can write the same
+                # file) removes a process hop, and works in environments where
+                # spawning a console app is restricted.
+                $reqDir = Join-Path $Root 'requests'
+                New-Item -ItemType Directory -Path $reqDir -Force | Out-Null
+                $req = [pscustomobject]@{
+                    shell = $Shell
+                    name = if ($Name) { $Name } else { '' }
+                    cwd = if ($Cwd) { $Cwd } else { '' }
+                    wslDistro = if ($WslDistro) { $WslDistro } else { '' }
+                    controller = if ($Controller) { $Controller } else { '' }
+                }
+                $known = @(Get-ChildItem (Join-Path $Root 'sessions') -Directory -ErrorAction SilentlyContinue |
+                           Select-Object -ExpandProperty Name)
+                $tmp = Join-Path $reqDir ((New-Guid).ToString('N') + '.tmp')
+                [System.IO.File]::WriteAllText($tmp, ($req | ConvertTo-Json -Compress),
+                    [System.Text.UTF8Encoding]::new($false))
+                Move-Item $tmp ([System.IO.Path]::ChangeExtension($tmp, '.newterm')) -Force
+
+                # wait for Studio to create it, then report the real code
+                $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                while ([DateTime]::UtcNow -lt $deadline) {
+                    Start-Sleep -Milliseconds 250
+                    $new = Get-ChildItem (Join-Path $Root 'sessions') -Directory -ErrorAction SilentlyContinue |
+                           Where-Object { $known -notcontains $_.Name }
+                    if ($new) {
+                        foreach ($d in $new) {
+                            try {
+                                $st = Get-Content (Join-Path $d.FullName 'state.json') -Raw | ConvertFrom-Json
+                                Write-Output "created $($st.name) ($($st.sessionId.Substring(0,8))) shell=$($st.shell) in MCPTerminal Studio"
+                            } catch { }
+                        }
+                        return
+                    }
+                }
+                Write-Output "requested a $Shell terminal from Studio, but it did not appear within 15s."
+                exit 3
+            }
+
             $exeArgs = @('--shell', $Shell)
             if ($Name) { $exeArgs += @('--name', $Name) }
             if ($Cwd) { $exeArgs += @('--cwd', ('"{0}"' -f $Cwd)) }
             if ($WslDistro) { $exeArgs += @('--wsl-distro', $WslDistro) }
             if ($Controller) { $exeArgs += @('--controller', ('"{0}"' -f $Controller)) }
             Start-Process $AppExe -ArgumentList $exeArgs | Out-Null
-            if ($inStudio) { Write-Output "terminal opening inside MCPTerminal Studio (shell=$Shell)" }
-            else { Write-Output "window launched (shell=$Shell) - the session code appears in its header/title" }
+            Write-Output "window launched (shell=$Shell) - the session code appears in its header/title"
         }
     }
 
@@ -179,11 +224,23 @@ switch ($Action) {
                 $sp = Join-Path $Root "sessions\$($_.Name)\state.json"
                 if (Test-Path $sp) { $ctrl = (Get-Content $sp -Raw | ConvertFrom-Json).controller }
             } catch { }
+            # what is this terminal doing? last command the assistant sent, else
+            # "(user)" when the human has been driving it directly.
+            $last = ''
+            try {
+                $lp = Join-Path $Root "sessions\$($_.Name)\assistant-cmds.log"
+                if (Test-Path $lp) {
+                    $ll = (Get-Content $lp -Tail 1 -ErrorAction SilentlyContinue)
+                    if ($ll) { $last = ($ll -replace '^\S+ \S+\s+', '') }
+                }
+            } catch { }
+            if (-not $last) { $last = '(user-driven)' }
+            if ($last.Length -gt 44) { $last = $last.Substring(0, 44) + '...' }
             [pscustomobject]@{
                 Guid = $_.Name.Substring(0, 8); Name = $_.Value.name
-                Mode = $_.Value.mode ?? 'headless'; Shell = $_.Value.shell; Status = $status
-                Controller = if ($ctrl) { $ctrl } else { '(unclaimed)' }
-                Updated = $_.Value.updatedAt ?? $_.Value.createdAt
+                Shell = $_.Value.shell; Status = $status
+                Controller = if ($ctrl) { $ctrl } else { '(unclaimed / user)' }
+                Doing = $last
             }
         })
         if ($rows.Count -eq 0) { Write-Output '(no sessions yet - mcpterm new)' }
@@ -235,16 +292,18 @@ switch ($Action) {
             Move-Item $tmp (Join-Path $sessionDir ("inbox\{0}_{1}.cmd" -f (Get-Date).Ticks, $cmdId)) -Force
             $ack = Join-Path $sessionDir "outbox\$cmdId.done"
             $ackDeadline = [DateTime]::UtcNow.AddSeconds(10)
-            while (-not (Test-Path $ack) -and [DateTime]::UtcNow -lt $ackDeadline) { Start-Sleep -Milliseconds 100 }
+            while (-not (Test-Path $ack) -and [DateTime]::UtcNow -lt $ackDeadline) { Start-Sleep -Milliseconds 25 }
             if (-not (Test-Path $ack)) { throw "session window did not accept the command (no ack)." }
             Remove-Item $ack -Force -ErrorAction SilentlyContinue
+            # Return as soon as output stops growing - tight polling keeps short
+            # commands feeling immediate instead of paying a fixed penalty.
             $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
             $lastLen = $pre; $lastChange = [DateTime]::UtcNow
             while ([DateTime]::UtcNow -lt $deadline) {
-                Start-Sleep -Milliseconds 150
+                Start-Sleep -Milliseconds 40
                 $len = if (Test-Path $t) { (Get-Item $t).Length } else { 0 }
                 if ($len -ne $lastLen) { $lastLen = $len; $lastChange = [DateTime]::UtcNow }
-                elseif ($len -gt $pre -and ([DateTime]::UtcNow - $lastChange).TotalMilliseconds -gt 500) { break }
+                elseif ($len -gt $pre -and ([DateTime]::UtcNow - $lastChange).TotalMilliseconds -gt 220) { break }
             }
             if ($lastLen -gt $pre) {
                 $fs = [System.IO.File]::Open($t, 'Open', 'Read', 'ReadWrite')

@@ -93,8 +93,13 @@ public static class ShellSupport
         "powershell" => $"powershell.exe -NoLogo -NoExit -Command \". '{initPath}'\"",
         "cmd" => $"cmd.exe /Q /K \"{initPath}\"",
         "bash" when isWindows => $"\"{FindGitBash()}\" --rcfile \"{initPath.Replace('\\', '/')}\" -i",
+        // Pass bash's arguments straight through with `--` instead of wrapping
+        // them in `bash -c "..."`: the nested quoting was being mangled before
+        // it reached bash, so --rcfile was dropped and the session silently
+        // started without our init (no info command, no connected-star prompt).
+        // The session path lives under LOCALAPPDATA and contains no spaces.
         "bash-wsl" => $"wsl.exe {(string.IsNullOrEmpty(wslDistro) ? "" : $"-d {wslDistro} ")}" +
-                      $"bash -c \"exec bash --rcfile {ToWslPath(initPath)} -i\"",
+                      $"-- bash --rcfile {ToWslPath(initPath)} -i",
         "bash" => $"bash --rcfile '{initPath}' -i",
         "sh" => "sh -i",
         _ => throw new InvalidOperationException($"unknown shell '{shell}'"),
