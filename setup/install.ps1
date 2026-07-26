@@ -254,15 +254,22 @@ scripts; break work into a few plain steps.
 
 Run PowerShell / bash / cmd commands through it, not through a private shell:
 
-1. `terminal_list` first - reuse a running session that fits the task.
-2. No suitable session? `terminal_new` (shells: `pwsh`, `powershell`, `cmd`,
-   `bash`, `bash-wsl`), then keep using it for that line of work.
-3. Always pass a `controller` label describing the chat/project.
+1. `terminal_new` with a `controller` label describing this chat and NO key -
+   that mints your own tab and returns its ACCESS KEY. Keep that key and pass
+   it as `key` on every later call, including further `terminal_new` calls, so
+   all your terminals stay in one tab.
+2. ACCESS KEYS ARE AUTHENTICATION. Reading, typing into, renaming or killing a
+   terminal requires its key. Terminals you hold no key for are not listed at
+   all - other conversations are invisible to you. If a call is denied, ask the
+   user for the key (it is in the terminal's header and its `info` output) or
+   make your own terminal. Never probe other ids.
+3. Reuse a running terminal of yours (`terminal_list -key`) before making more;
+   keep one per concern (build, tests, logs, git).
 4. Name terminals for their purpose (`terminal_rename`); rename when repurposed.
 5. `terminal_read` to see what the user typed; `terminal_keys` for interactive
    prompts and TUI apps (e.g. `Y{ENTER}`, `{CTRL+C}`).
-6. If the user pastes a session code (text or screenshot), connect immediately
-   with `terminal_connect` - no deliberation.
+6. If the user pastes a session code and key (text or screenshot), connect
+   immediately with `terminal_connect` - no deliberation.
 
 Terminals are for commands only - never converse through them.
 '@

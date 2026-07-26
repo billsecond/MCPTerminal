@@ -294,16 +294,33 @@ mcpterm kill   -Id <code>
 An optional WinForms app (`studio/`) that manages your shared terminals in one
 window, Cursor/Windsurf-style:
 
+- **Startup warning**: every launch states plainly that connected clients get
+  full control of this machine, with no warranty and no liability, and asks you
+  to accept or exit. Tick *Don't show this again* to remember your acceptance
+  (stored in `studio-settings.json` beside the session data — delete that key to
+  bring the warning back).
 - **Top tabstrip: one tab per conversation** — terminals group automatically by
-  the controlling chat's label; ungrouped ones live under "Local".
-- **Vertical terminal list** on the left with live **activity indicators**
-  (cyan pulse = output right now, green = assistant-controlled) — click through
-  terminals like a list.
+  the controlling chat's label; ungrouped ones live under "Local". Each tab has
+  its own **access key**; a chat cannot see another chat's tab.
+- **Three independent tab indicators**, never merged into one light:
+  a **glowing green** dot while an assistant is actually interacting (held a
+  second past the last byte, mirrored by a global light at the top-left of the
+  strip), **amber** while an assistant is connected but quiet, **grey** when
+  none is. A separate **purple pip** means unseen output. Your own typing never
+  lights the green — it would only tell you what you already know.
+- **Close a tab** with the ✕ that appears on hover; closing one with several
+  terminals asks once, with *do the same for the rest*.
+- **Vertical terminal list** on the left, click through terminals like a list.
 - **Embedded native terminals** (ConPTY + xterm rendering): PS7 / CMD /
-  Git Bash / WSL via the `+` buttons. Full copy/paste: select-to-copy,
-  right-click paste, Ctrl+C (with selection) / Ctrl+V.
-- **History tab**: full-text search across every past session transcript;
-  click a result to read the whole transcript.
+  Git Bash / WSL via the `+` buttons — they join the tab you launch them from.
+  Full copy/paste: select-to-copy, right-click paste, Ctrl+C (with selection) /
+  Ctrl+V.
+- **History tab**: **browse** every past terminal grouped by conversation, or
+  full-text search across every transcript. Either way, clicking one replays it
+  through xterm from the raw session log, so the colours and layout are the ones
+  you saw live.
+- **Window size and position** are remembered across restarts, and sessions left
+  marked "running" by a killed host are reaped at startup.
 - **Integration rule**: Studio is never required — but while it runs, any
   terminal launch (shortcut, CLI, MCP) opens *inside* it. Closing Studio
   terminates its terminals (their logs remain). Standalone windows are
@@ -316,7 +333,14 @@ Studio terminals speak the identical session protocol, so `connect`/`exec`/
 
 ## Making your assistant use it
 
-The installer offers to write routing rules to your global assistant memory
+The installer asks, one client at a time, which assistants may drive these
+terminals — **Claude Code (CLI)**, **Claude Desktop**, **Cursor**, **Windsurf** —
+and only offers the ones it finds installed. Each registration merges
+`mcpterminal` into that client's own MCP config, leaving everything else in the
+file untouched (a `.mcpterminal-backup` copy is kept), and `-Uninstall` removes
+just that entry again.
+
+It then offers to write routing rules to your global assistant memory
 (`~/.claude/CLAUDE.md`) so **every new chat** runs shell commands through
 MCPTerminal. If you skipped that, or your assistant isn't picking it up, see
 **[CLAUDE-INSTRUCTIONS.md](CLAUDE-INSTRUCTIONS.md)** for a block you can paste
