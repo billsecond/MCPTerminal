@@ -311,6 +311,14 @@ window, Cursor/Windsurf-style:
 - **Close a tab** with the ✕ that appears on hover; closing one with several
   terminals asks once, with *do the same for the rest*.
 - **Vertical terminal list** on the left, click through terminals like a list.
+- **Split panes, VS Code style.** Drag a terminal — from the sidebar or by its
+  title strip — into the pane area and drop it against an edge to dock it
+  **left, right, above or below** another; drop it in the middle to take that
+  pane over. A highlight shows exactly where it will land. Drag the divider
+  between panes to resize, and dock a third pane on the same axis to get an even
+  row or column rather than a nested one. Closing a terminal collapses its slot
+  back into the grid. Each conversation tab keeps its own arrangement, and with a
+  single terminal the view looks exactly as it always did.
 - **Embedded native terminals** (ConPTY + xterm rendering): PS7 / CMD /
   Git Bash / WSL via the `+` buttons — they join the tab you launch them from.
   Full copy/paste: select-to-copy, right-click paste, Ctrl+C (with selection) /

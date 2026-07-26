@@ -12,6 +12,7 @@
 // =============================================================================
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -76,7 +77,18 @@ public static class AccessKeys
         // (or names no tab at all) is given its own tab instead of being let in.
         if (IsLocal(label))
         {
-            if (trusted) return (LocalTab, "");
+            if (trusted)
+            {
+                // Installs predating the unclaimed-Local model may still carry a
+                // key for Local. Nothing honours it any more, so drop it rather
+                // than leave a key lying around implying Local can be claimed.
+                var t = Load(root);
+                bool pruned = false;
+                foreach (var legacy in t.Select(p => p.Key).Where(IsLocal).ToList())
+                { t.Remove(legacy); pruned = true; }
+                if (pruned) Save(root, t);
+                return (LocalTab, "");
+            }
             var own = Load(root);
             string mine;
             int n = 1;
