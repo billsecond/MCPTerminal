@@ -69,7 +69,68 @@ function Get-SessionKey([string]$sid) {
     return $null
 }
 
+# The Local tab is the user's own. It is never given a key, so there is nothing
+# to present and nothing to leak - and we check the label as well as the key so
+# a forged or empty key still cannot reach it.
+function Test-IsLocal([string]$sid) {
+    try {
+        $sp = Join-Path $Root "sessions\$sid\state.json"
+        if (Test-Path $sp) {
+            $st = Get-Content $sp -Raw | ConvertFrom-Json
+            $tab = $st.tabLabel
+            if (-not $tab) { return (-not $st.controller) }   # no tab recorded = ungrouped = local
+            return ($tab -ieq 'Local')
+        }
+    } catch { }
+    return $false
+}
+
+# tabs.json: tab label -> access key. Mirrors AccessKeys.ClaimTab in the app so
+# the CLI and the app agree on who owns which tab.
+function Get-OrCreateTab([string]$label, [string]$suppliedKey) {
+    $file = Join-Path $Root 'tabs.json'
+    $tabs = if (Test-Path $file) {
+        try { Get-Content $file -Raw | ConvertFrom-Json } catch { [pscustomobject]@{} }
+    } else { [pscustomobject]@{} }
+    if (-not $tabs) { $tabs = [pscustomobject]@{} }
+
+    $existing = $tabs.PSObject.Properties[$label]
+    if ($existing) {
+        if ($suppliedKey -and $existing.Value.key -eq $suppliedKey) {
+            return @{ Label = $label; Key = $existing.Value.key }
+        }
+        # taken by someone else and no valid key - branch off a new tab
+        $n = 2
+        while ($tabs.PSObject.Properties["$label #$n"]) { $n++ }
+        $label = "$label #$n"
+    }
+    $key = New-AccessKey
+    $tabs | Add-Member -Force NoteProperty $label ([pscustomobject]@{
+        key = $key; createdAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    })
+    [System.IO.File]::WriteAllText($file, ($tabs | ConvertTo-Json -Depth 8),
+        [System.Text.UTF8Encoding]::new($false))
+    return @{ Label = $label; Key = $key }
+}
+
+# Take over an unclaimed Local terminal: it MOVES out of Local into the calling
+# conversation's tab and is issued that tab's key. Local therefore always means
+# "no assistant has touched this" - a takeover is visible the moment it happens,
+# because the terminal jumps tabs in Studio.
+function Claim-LocalSession($s, [string]$controllerLabel, [string]$suppliedKey) {
+    $tab = Get-OrCreateTab $controllerLabel $suppliedKey
+    $spath = Join-Path $Root "sessions\$($s.Sid)\state.json"
+    $st = Get-Content $spath -Raw | ConvertFrom-Json
+    $st | Add-Member -Force NoteProperty accessKey $tab.Key
+    $st | Add-Member -Force NoteProperty tabLabel $tab.Label
+    $st | Add-Member -Force NoteProperty controller $tab.Label
+    [System.IO.File]::WriteAllText($spath, ($st | ConvertTo-Json -Depth 8),
+        [System.Text.UTF8Encoding]::new($false))
+    return $tab
+}
+
 function Test-KeyMatch([string]$sid, [string]$supplied) {
+    if (Test-IsLocal $sid) { return $false }     # must be claimed out of Local first
     $have = Get-SessionKey $sid
     # A session with no key at all predates this feature. Every session created
     # now gets one, so the only keyless sessions left are stale index entries
@@ -88,6 +149,22 @@ function Assert-Access($s, [string]$supplied) {
     if (Test-KeyMatch $s.Sid $supplied) { return }
     # A plain message, not a PowerShell exception: this text is what an
     # assistant reads back, and a stack trace only invites a retry.
+    if (Test-IsLocal $s.Sid) {
+        # Unclaimed and local: takeable, but only INTO your own tab. Name the
+        # conversation and the terminal moves there; Local keeps its meaning.
+        if (-not $Controller) {
+            Write-Output "'$($s.Info.name)' is a LOCAL terminal - the user's own, unclaimed."
+            Write-Output '  To take it over, pass -Controller "<your chat label>": the terminal MOVES'
+            Write-Output '  out of Local into your tab and is issued that tab''s access key. Local'
+            Write-Output '  terminals themselves have no key, so there is nothing to ask the user for.'
+            exit 4
+        }
+        $tab = Claim-LocalSession $s $Controller $Key
+        Write-Output "[claimed '$($s.Info.name)' out of Local into tab '$($tab.Label)']"
+        Write-Output "[ACCESS KEY: $($tab.Key)  <- pass as -Key on every later call for this tab]"
+        $script:Key = $tab.Key
+        return
+    }
     Write-Output "ACCESS DENIED - '$($s.Info.name)' belongs to another conversation."
     if ($supplied) { Write-Output '  The key you supplied does not open it.' }
     else { Write-Output '  You supplied no access key.' }
@@ -271,9 +348,13 @@ switch ($Action) {
         # Sessions the supplied key does not unlock are not listed at all - a
         # caller must not learn that another conversation's terminals exist,
         # let alone their names. Only the count is reported.
+        # Shown: your own tab's terminals, plus the user's unclaimed Local ones
+        # (which you may take over - doing so moves them into your tab).
+        # Hidden: everything belonging to another conversation.
         $lockedCount = 0
         $rows = @($idx.PSObject.Properties | Where-Object {
-            if (Test-KeyMatch $_.Name $Key) { $true } else { $script:lockedCount++; $false }
+            if ((Test-KeyMatch $_.Name $Key) -or (Test-IsLocal $_.Name)) { $true }
+            else { $script:lockedCount++; $false }
         } | ForEach-Object {
             $status = $_.Value.status
             if ($_.Value.mode -eq 'native' -and $status -eq 'running' -and $_.Value.windowPid) {
@@ -305,7 +386,7 @@ switch ($Action) {
             [pscustomobject]@{
                 Guid = $_.Name.Substring(0, 8); Name = $_.Value.name
                 Shell = $_.Value.shell; Status = $status
-                Controller = if ($ctrl) { $ctrl } else { '(unclaimed / user)' }
+                Controller = if ($ctrl) { $ctrl } else { '(local - take over with -Controller)' }
                 Doing = $last
             }
         })
@@ -519,6 +600,10 @@ Reading or driving a terminal requires its key (-Key); `new` without a key mints
 a fresh tab and prints the key it created. The key is shown in the terminal
 window's own header and by running `info` inside it, so the person at the
 keyboard decides who gets in. Terminals you hold no key for are not listed.
+
+LOCAL IS PRIVATE: terminals in the "Local" tab are the user's own. They are
+never issued a key, cannot be listed, read, typed into or killed by an
+assistant, and an assistant cannot create one - `new` puts it in its own tab.
 
 Sessions + logs + index: %LOCALAPPDATA%\MCPTerminal
 '@ | Write-Output

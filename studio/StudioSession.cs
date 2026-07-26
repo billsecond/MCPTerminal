@@ -137,7 +137,7 @@ public sealed class StudioSession
 
     // Reads live status for the UI: (controller, secondsSinceAssistant or -1,
     // current name - renames flow through state.json).
-    public (string controller, long controlAgo, string name) ReadLive()
+    public (string controller, long controlAgo, string name, string key) ReadLive()
     {
         try
         {
@@ -148,9 +148,15 @@ public sealed class StudioSession
                 ago = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - st["lastControlUnix"].GetValue<long>();
             string nm = st?["name"]?.GetValue<string>() ?? Name;
             if (nm != Name) Name = nm;
-            return (ctrl, ago, nm);
+            // An assistant claiming a Local terminal rewrites these in place;
+            // re-read them so the UI moves the terminal to its new tab.
+            string k = st?["accessKey"]?.GetValue<string>() ?? "";
+            if (k != AccessKey) AccessKey = k;
+            string tl = st?["tabLabel"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(tl) && tl != TabLabel) TabLabel = tl;
+            return (ctrl, ago, nm, k);
         }
-        catch { return (null, -1, Name); }
+        catch { return (null, -1, Name, AccessKey); }
     }
 
     public void Rename(string newName)

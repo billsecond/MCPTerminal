@@ -23,6 +23,11 @@ public static class AccessKeys
 
     public static string TabsFile(string root) => Path.Combine(root, "tabs.json");
 
+    // The user's own tab, matched case-insensitively so "local" cannot be used
+    // to slip past the check and create a second, assistant-reachable "Local".
+    public static bool IsLocal(string label) =>
+        string.IsNullOrWhiteSpace(label) || label.Trim().Equals(LocalTab, StringComparison.OrdinalIgnoreCase);
+
     public static string NewKey()
     {
         var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(6);
@@ -64,6 +69,24 @@ public static class AccessKeys
         string suppliedKey, bool trusted)
     {
         string label = string.IsNullOrWhiteSpace(controller) ? LocalTab : controller.Trim();
+
+        // LOCAL IS YOURS ALONE. It never gets a key, so there is nothing to hand
+        // out and nothing an assistant can present - the CLI refuses every
+        // operation on a Local session. An untrusted caller that asks for Local
+        // (or names no tab at all) is given its own tab instead of being let in.
+        if (IsLocal(label))
+        {
+            if (trusted) return (LocalTab, "");
+            var own = Load(root);
+            string mine;
+            int n = 1;
+            do { mine = $"chat-{n++}"; } while (own[mine] != null);
+            string k = NewKey();
+            own[mine] = new JsonObject { ["key"] = k, ["createdAt"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
+            Save(root, own);
+            return (mine, k);
+        }
+
         var tabs = Load(root);
 
         if (tabs[label] is JsonObject existing)

@@ -268,7 +268,10 @@ function convState(c) {
 }
 
 function renderTabs() {
-  const convs = [...new Set([...terms.values()].map(convOf))];
+  // Local is sticky: it is your own space and stays on the strip even with
+  // nothing in it, so there is always somewhere to open a terminal that no
+  // assistant owns. (Claiming one moves it out of Local into the chat's tab.)
+  const convs = [...new Set(['Local', ...[...terms.values()].map(convOf)])];
   if (!convs.includes(activeConv) && convs.length) activeConv = convs[0];
   $tabs.innerHTML = '';
 
@@ -280,13 +283,17 @@ function renderTabs() {
 
   const mkTab = (c) => {
     const el = document.createElement('div');
+    const isLocal = c === 'Local';
     el.className = 'tab' + (!historyMode && c === activeConv ? ' active' : '');
-    el.title = c;
+    el.title = isLocal
+      ? 'Your own terminals. No assistant can read or drive one until it claims it, and claiming moves it into that chat\'s tab.'
+      : c;
+    // Local has no ✕ - it is permanent, not a conversation that ends.
     el.innerHTML = '<span class="tdot"></span><span class="lbl"></span>' +
-                   '<span class="tnew"></span><span class="tx">&#10005;</span>';
+                   '<span class="tnew"></span>' + (isLocal ? '' : '<span class="tx">&#10005;</span>');
     el.querySelector('.lbl').textContent = c;
     el.onclick = () => { historyMode = false; activeConv = c; renderAll(); };
-    el.querySelector('.tx').onclick = ev => { ev.stopPropagation(); closeConv(c); };
+    if (!isLocal) el.querySelector('.tx').onclick = ev => { ev.stopPropagation(); closeConv(c); };
     el.dataset.conv = c;
     return el;
   };
@@ -493,8 +500,12 @@ function updatePaneHead() {
   document.getElementById('phId').textContent = t.shortId ?? '';
   document.getElementById('phShell').textContent = t.shell;
   const pk = document.getElementById('phKey');
-  pk.textContent = t.key ? 'key ' + t.key : '';
-  pk.style.cursor = t.key ? 'pointer' : '';
+  pk.textContent = t.key ? 'key ' + t.key : 'local · unclaimed';
+  pk.title = t.key
+    ? 'Access key - click to copy. An assistant needs this to use this terminal.'
+    : 'Yours. An assistant can claim it, which moves it out of Local into that chat\'s tab.';
+  pk.style.cursor = t.key ? 'pointer' : 'default';
+  pk.style.color = t.key ? '' : 'var(--green)';
   pk.onclick = () => { if (t.key) navigator.clipboard.writeText(t.key).catch(() => {}); };
   const chat = t.conv && t.conv.length ? t.conv : '';
   document.getElementById('phChat').textContent = chat ? 'chat: ' + chat : '';
@@ -628,6 +639,9 @@ bridge?.addEventListener('message', ev => {
       const convChanged = conv !== t.conv;
       const nameChanged = m.name && m.name !== t.name;
       if (nameChanged) t.name = m.name;
+      // A claim rewrites the session's tab and key, so the terminal visibly
+      // moves out of Local and the header picks up its new key.
+      if (m.key !== undefined && m.key !== t.key) t.key = m.key;
       t.conv = conv; t.controlAgo = m.controlAgo; t.activeAgo = m.activeAgo;
       if (nameChanged && !convChanged) { renderList(); updatePaneHead(); }
       if (convChanged) renderAll();

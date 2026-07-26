@@ -246,13 +246,13 @@ public sealed class StudioForm : Form
         if (!_uiReady) return;
         foreach (var s in _sessions.Values)
         {
-            var (controller, controlAgo, name) = s.ReadLive();
+            var (controller, controlAgo, name, key) = s.ReadLive();
             double activeAgo = s.LastOutputUtc == DateTime.MinValue
                 ? -1 : (DateTime.UtcNow - s.LastOutputUtc).TotalSeconds;
             Post(new
             {
                 type = "status", id = s.Id,
-                controller = controller ?? "", controlAgo, activeAgo, name,
+                controller = controller ?? "", controlAgo, activeAgo, name, key,
             });
         }
     }
