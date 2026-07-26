@@ -25,6 +25,18 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
+  <!--
+    The WebView2 package ships both a WinForms and a WPF binding. This app only
+    uses the WinForms one; the WPF assembly targets .NET 5 WPF and drags in
+    WindowsBase 5.0.0.0, which conflicts with the 4.0.0.0 this WinForms app
+    resolves (MSB3277). Drop the unused WPF reference so there is no conflict.
+  -->
+  <Target Name="DropUnusedWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <None Include="ui.html" CopyToOutputDirectory="PreserveNewest" />
     <!-- vendored browser assets (xterm.js + addon-fit, MIT) - no CDN at runtime -->

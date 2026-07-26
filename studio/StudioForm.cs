@@ -38,7 +38,10 @@ public sealed class StudioForm : Form
         BackColor = Color.FromArgb(24, 24, 27);
         Width = 1400;
         Height = 860;
-        StartPosition = FormStartPosition.CenterScreen;
+        // Restore geometry BEFORE the form is shown. Doing it in Load is too
+        // late: WinForms applies StartPosition during Show and overwrites
+        // whatever Load set, which is why the saved size/position never stuck.
+        StartPosition = RestoreWindowState() ? FormStartPosition.Manual : FormStartPosition.CenterScreen;
         Controls.Add(_web);
         Load += OnLoad;
         FormClosing += OnClosing;
@@ -52,25 +55,26 @@ public sealed class StudioForm : Form
     string UiStateFile => Path.Combine(_root, "studio-ui.json");
     bool _saveDirty;
 
-    void RestoreWindowState()
+    // Returns true if saved geometry was applied (caller then uses Manual
+    // positioning so WinForms does not re-centre the window on show).
+    bool RestoreWindowState()
     {
         try
         {
-            if (!File.Exists(UiStateFile)) return;
+            if (!File.Exists(UiStateFile)) return false;
             var st = JsonNode.Parse(File.ReadAllText(UiStateFile)) as JsonObject;
-            if (st == null) return;
+            if (st == null) return false;
             var b = new Rectangle(
                 st["x"]?.GetValue<int>() ?? Left, st["y"]?.GetValue<int>() ?? Top,
                 st["w"]?.GetValue<int>() ?? Width, st["h"]?.GetValue<int>() ?? Height);
-            // only restore if it lands on a visible screen
-            if (Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(b)) && b.Width >= 400 && b.Height >= 300)
-            {
-                StartPosition = FormStartPosition.Manual;
-                Bounds = b;
-            }
+            // only restore if it still lands on a connected screen
+            if (b.Width < 400 || b.Height < 300) return false;
+            if (!Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(b))) return false;
+            Bounds = b;
             if (st["max"]?.GetValue<bool>() == true) WindowState = FormWindowState.Maximized;
+            return true;
         }
-        catch { }
+        catch { return false; }
     }
 
     void SaveWindowState()
@@ -90,7 +94,6 @@ public sealed class StudioForm : Form
 
     async void OnLoad(object sender, EventArgs e)
     {
-        RestoreWindowState();
         File.WriteAllText(Path.Combine(_root, "studio.lock"), Environment.ProcessId.ToString());
 
         var env = await CoreWebView2Environment.CreateAsync(null,
