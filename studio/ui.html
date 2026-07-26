@@ -520,7 +520,10 @@ function renderList() {
     row.draggable = true;
     row.addEventListener('dragstart', ev => beginTermDrag(ev, t.id));
     row.title = 'Click to show here · drag into the pane area to dock it left / right / above / below';
-    row.onclick = () => { historyMode = false; showInFocusedPane(t.id); t.unseen = false; renderAll(); };
+    row.onclick = () => {
+      historyMode = false; showInFocusedPane(t.id); t.unseen = false; renderAll();
+      terms.get(t.id)?.term.focus();
+    };
     row.ondblclick = () => {
       const n = prompt('Rename terminal (name it for what it does):', t.name);
       if (n && n.trim() && n.trim() !== t.name) send({ type: 'renameTerm', id: t.id, name: n.trim() });
@@ -700,6 +703,30 @@ function ensureLayout() {
   if (shown.length && !shown.includes(activeTerm)) activeTerm = shown[0];
 }
 
+// Move focus to a pane WITHOUT relaying out. Clicking a pane must not rebuild
+// the grid: a full render recreates the sashes and re-fits every terminal, which
+// is both wasteful and enough to cancel a drag gesture that is just starting.
+function setFocusPane(id, focusTerm = true) {
+  if (!terms.has(id)) return;
+  if (activeTerm !== id) {
+    activeTerm = id;
+    for (const t of terms.values()) t.el.classList.toggle('focused', t.id === activeTerm);
+    markRows();
+    updatePaneHead();
+  }
+  if (focusTerm && !historyMode) terms.get(id).term.focus();
+}
+
+// Repaint the sidebar's active/on-screen classes in place.
+function markRows() {
+  const onScreen = new Set(leafIds(rootOf(activeConv)));
+  for (const t of terms.values()) {
+    if (!t.row) continue;
+    t.row.classList.toggle('active', t.id === activeTerm);
+    t.row.classList.toggle('shown', t.id !== activeTerm && onScreen.has(t.id));
+  }
+}
+
 // Show a terminal in the focused pane (sidebar click), or focus the pane that
 // already has it.
 function showInFocusedPane(id) {
@@ -760,7 +787,12 @@ function applyLayout() {
       try { t.fit.fit(); } catch { }
       send({ type: 'resize', id: t.id, cols: t.term.cols, rows: t.term.rows });
     }
-    if (!historyMode) terms.get(activeTerm)?.term.focus();
+    // Only claim focus if it is not already inside a terminal. A relayout can be
+    // triggered by anything - a status tick, a window resize, another pane
+    // closing - and it must never yank the caret out of the pane you are typing
+    // in and back to the first one in the grid.
+    if (!historyMode && !document.activeElement?.closest?.('.pane'))
+      terms.get(activeTerm)?.term.focus();
   });
 }
 
@@ -823,9 +855,15 @@ function hitTest(clientX, clientY) {
 $drop.addEventListener('dragover', ev => {
   if (!dragId) return;
   ev.preventDefault();
-  ev.dataTransfer.dropEffect = 'move';
   const h = hitTest(ev.clientX, ev.clientY);
-  if (!h) { $hint.classList.remove('on'); return; }
+  // No highlight over the pane being dragged, or over empty background - those
+  // drops do nothing, and promising a landing spot would be a lie.
+  if (!h || h.rect.id === dragId) {
+    ev.dataTransfer.dropEffect = 'none';
+    $hint.classList.remove('on');
+    return;
+  }
+  ev.dataTransfer.dropEffect = 'move';
   const { rect: r, side } = h;
   const half = { left: [r.x, r.y, r.w / 2, r.h], right: [r.x + r.w / 2, r.y, r.w / 2, r.h],
                  top: [r.x, r.y, r.w, r.h / 2], bottom: [r.x, r.y + r.h / 2, r.w, r.h / 2],
@@ -843,16 +881,22 @@ $drop.addEventListener('drop', ev => {
   if (!id || !terms.get(id)) return;
   const root = rootOf(activeConv);
   const targetId = h ? h.rect.id : null;
-  const side = h ? h.side : 'center';
-  if (targetId === id && side === 'center') return;               // dropped on itself
-  if (targetId === id && leafIds(root).length === 1) return;      // nothing to split against
+  // Dropping a pane on itself is a no-op, on every side. It used to fall through
+  // to "no valid target", which re-homed the pane into the FIRST slot in the
+  // grid - so a dragged pane appeared not to move, and clobbered whatever was
+  // in the top pane on the way.
+  if (targetId === id) return;
+  // Dropped on the background rather than on a pane: leave the grid alone unless
+  // there is nothing in it yet.
+  if (!targetId && root) return;
   // Take it out of its old slot first, then re-home it. The target leaf is
   // looked up again afterwards because removal can collapse the tree around it.
   if (findLeaf(root, id)) layoutRemove(activeConv, id);
   const target = targetId ? findLeaf(rootOf(activeConv), targetId) : null;
-  layoutInsert(activeConv, target, target ? side : 'center', id);
+  layoutInsert(activeConv, target, target ? h.side : 'center', id);
   activeTerm = id;
   renderAll();
+  terms.get(id)?.term.focus();      // you dropped it, you get to type in it
 });
 
 function renderPanes() {
@@ -881,14 +925,16 @@ function addTerm(m) {
   strip.querySelector('.nm').textContent = m.name;
   strip.querySelector('.sh').textContent = m.shell;
   strip.addEventListener('dragstart', ev => beginTermDrag(ev, m.id));
-  strip.addEventListener('mousedown', () => { activeTerm = m.id; renderAll(); });
+  // focus only - no relayout, or the grid rebuilds under the pointer and the
+  // drag never gets off the ground
+  strip.addEventListener('mousedown', () => setFocusPane(m.id, false));
   strip.querySelector('.x').onclick = ev => { ev.stopPropagation(); send({ type: 'closeTerm', id: m.id }); };
   const body = document.createElement('div');
   body.className = 'pbody';
   el.append(strip, body);
   // clicking anywhere in a pane focuses it - the pane you type into is the one
   // the sidebar, header and new terminals target
-  el.addEventListener('mousedown', () => { if (activeTerm !== m.id) { activeTerm = m.id; renderAll(); } });
+  el.addEventListener('mousedown', () => setFocusPane(m.id));
   $panes.appendChild(el);
   const term = new Terminal({
     fontFamily: 'Cascadia Mono, Consolas, monospace', fontSize: 14,
@@ -1172,10 +1218,14 @@ window.addEventListener('resize', () => {
   if (historyMode && histTerm) histTerm.__fit.fit();
 });
 
-// clicking anywhere in the terminal area focuses the shell
-document.getElementById('panes').addEventListener('mousedown', () => {
-  const t = terms.get(activeTerm);
-  if (t && !historyMode) setTimeout(() => t.term.focus(), 0);
+// Focus follows the pane you actually click. (There used to be a single handler
+// here that re-focused `activeTerm` for any click in the pane area - harmless
+// with one terminal, but with a split it fought the per-pane handlers and sent
+// your keystrokes to the wrong shell.)
+document.getElementById('panes').addEventListener('focusin', ev => {
+  const pane = ev.target.closest?.('.pane');
+  if (!pane || historyMode) return;
+  for (const t of terms.values()) if (t.el === pane) { setFocusPane(t.id, false); break; }
 });
 
 renderAll();
