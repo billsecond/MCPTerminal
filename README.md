@@ -463,6 +463,18 @@ the target machine.
 - Secrets echoed to the screen or passed on command lines **are captured**.
   Keystrokes are forwarded without separate logging, so non-echoed prompts
   (`sudo`, `ssh` password) generally are not — don't depend on that.
+- **What access keys are and are not.** They separate *conversations* from each
+  other: one chat cannot see, read or drive another chat's terminals, and cannot
+  discover that they exist. They are **not** a defence against other software
+  running as you. Keys live in plain text in `tabs.json` and each `state.json`
+  under your user profile, so any process with your privileges can read them —
+  and anything that can write to a session's `inbox` folder can type into your
+  shell without a key at all. Treat the keys as a partition between chats, and
+  your user account as the real security boundary.
+- **Local terminals** hold no key, so nothing can drive one. An assistant may
+  *claim* one, and that moves it out of Local into that chat's tab where you can
+  see it — which is the point: anything in Local has never been touched by an
+  assistant.
 - The control channel is local files under your user profile. Nothing listens
   on the network; the MCP server runs locally over stdio; Studio's UI assets
   are vendored (no CDN) under a strict CSP.
