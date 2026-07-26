@@ -131,18 +131,15 @@
 
   /* ---- terminal panes ---- */
   #paneWrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  #paneHead { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
-    background: var(--bg2); border-bottom: 1px solid var(--line); font-size: 12px;
-    white-space: nowrap; overflow: hidden; }
-  #phName { color: var(--accent); font-weight: 600; }
+  .phName { color: var(--accent); font-weight: 600; }
   .phdim { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
   .phchip { font-size: 10px; color: var(--dim); background: var(--bg);
-    border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; flex: none; }
   .phspacer { flex: 1; }
-  #phStatus { font-weight: 600; }
-  #phStatus.ctl { color: var(--accent); }
-  #phStatus.idle { color: var(--green); }
-  #phStatus.disc { color: var(--dim); font-weight: 400; }
+  .phStatus { font-weight: 600; flex: none; }
+  .phStatus.ctl { color: var(--accent); }
+  .phStatus.idle { color: var(--green); }
+  .phStatus.disc { color: var(--dim); font-weight: 400; }
   /* Panes are absolutely positioned from a layout tree (see the grid section
      in the script): splitting must never reparent a terminal's DOM, which
      would throw away its canvas, scrollback and focus. */
@@ -150,14 +147,19 @@
   .pane { position: absolute; display: none; flex-direction: column; }
   .pane.shown { display: flex; }
   .pane .pbody { flex: 1; min-height: 0; min-width: 0; }
-  /* per-pane title strip: only earns its space once the view is split */
-  .pstrip { display: none; align-items: center; gap: 7px; padding: 3px 4px 4px 8px;
-    font-size: 11px; color: var(--dim); cursor: grab; user-select: none; }
-  #panes.split .pstrip { display: flex; }
-  #panes.split .pane { outline: 1px solid var(--line); border-radius: 7px; }
-  #panes.split .pane.focused { outline-color: var(--accent); }
+  /* Every pane carries the full terminal header - name, id, shell, key, chat,
+     status - so a split never hides which terminal you are looking at. It is
+     also the drag handle for docking. */
+  .pane { outline: 1px solid var(--line); border-radius: 7px; }
+  .pane.focused { outline-color: var(--accent); }
+  .pstrip { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px;
+    background: var(--bg2); border-bottom: 1px solid var(--line); font-size: 12px;
+    white-space: nowrap; overflow: hidden; cursor: grab; user-select: none;
+    border-radius: 6px 6px 0 0; flex: none; }
+  .pane.focused .pstrip { background: var(--bg3); }
   .pstrip:active { cursor: grabbing; }
-  .pstrip .nm { color: var(--fg); font-weight: 600; }
+  .pstrip .x { color: var(--dim); flex: none; padding: 0 4px; cursor: pointer; }
+  .pstrip .x:hover { color: #f87171; }
   .pane.focused .pstrip .nm { color: var(--accent); }
   .pstrip .sh { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
   .pstrip .sp { flex: 1; }
@@ -230,15 +232,6 @@
     </div>
     <div id="dragbar"></div>
     <div id="paneWrap">
-      <div id="paneHead">
-        <span id="phName">-</span>
-        <span id="phId" class="phdim"></span>
-        <span id="phShell" class="phchip"></span>
-        <span id="phKey" class="phchip" title="Access key - click to copy. An assistant needs this to use this terminal."></span>
-        <span class="phspacer"></span>
-        <span id="phChat" class="phdim"></span>
-        <span id="phStatus"></span>
-      </div>
       <div id="panes">
         <div id="dropLayer"><div id="dropHint"></div></div>
       </div>
@@ -533,47 +526,46 @@ function renderList() {
   }
 }
 
-function updatePaneHead() {
-  const t = terms.get(activeTerm);
-  const st = document.getElementById('phStatus');
-  if (!t) {
-    document.getElementById('phName').textContent = '-';
-    document.getElementById('phId').textContent = '';
-    document.getElementById('phShell').textContent = '';
-    document.getElementById('phKey').textContent = '';
-    document.getElementById('phChat').textContent = '';
-    st.textContent = ''; st.className = '';
-    return;
-  }
-  document.getElementById('phName').textContent = t.name;
-  document.getElementById('phId').textContent = t.shortId ?? '';
-  document.getElementById('phShell').textContent = t.shell;
-  const pk = document.getElementById('phKey');
+// Fill one pane's header. Every pane carries the same set of fields, so a split
+// never leaves you guessing which terminal a pane is - or what its key, owning
+// chat or connection state is.
+function updatePaneHeader(t) {
+  if (!t?.strip) return;
+  const q = c => t.strip.querySelector('.' + c);
+  q('phName').textContent = t.name;
+  q('phId').textContent = t.shortId ?? '';
+  q('phShell').textContent = t.shell;
+  const pk = q('phKey');
   pk.textContent = t.key ? 'key ' + t.key : 'local · unclaimed';
   pk.title = t.key
     ? 'Access key - click to copy. An assistant needs this to use this terminal.'
     : 'Yours. An assistant can claim it, which moves it out of Local into that chat\'s tab.';
   pk.style.cursor = t.key ? 'pointer' : 'default';
   pk.style.color = t.key ? '' : 'var(--green)';
-  pk.onclick = () => { if (t.key) navigator.clipboard.writeText(t.key).catch(() => {}); };
-  const chat = t.conv && t.conv.length ? t.conv : '';
-  document.getElementById('phChat').textContent = chat ? 'chat: ' + chat : '';
+  pk.onclick = ev => {
+    ev.stopPropagation();
+    if (t.key) navigator.clipboard.writeText(t.key).catch(() => {});
+  };
+  q('phChat').textContent = t.conv && t.conv.length ? 'chat: ' + t.conv : '';
+  const st = q('phStatus');
   if (t.closed) {
     const who = t.closedReason === 'assistant' ? 'by the assistant'
       : t.closedReason === 'user' ? 'by you' : '(shell exited)';
-    st.textContent = `CLOSED ${who}`; st.className = 'disc';
+    st.textContent = `CLOSED ${who}`; st.className = 'phStatus disc';
     st.style.color = '#f87171';
     return;
   }
   st.style.color = '';
   if (t.controlAgo >= 0 && t.controlAgo < 120) {
-    st.textContent = `CONTROLLED - ${t.controlAgo}s ago`; st.className = 'ctl';
+    st.textContent = `CONTROLLED - ${t.controlAgo}s ago`; st.className = 'phStatus ctl';
   } else if (t.controlAgo >= 0) {
-    st.textContent = `connected - idle ${Math.floor(t.controlAgo / 60)}m`; st.className = 'idle';
+    st.textContent = `connected - idle ${Math.floor(t.controlAgo / 60)}m`; st.className = 'phStatus idle';
   } else {
-    st.textContent = 'DISCONNECTED'; st.className = 'disc';
+    st.textContent = 'DISCONNECTED'; st.className = 'phStatus disc';
   }
 }
+
+function updatePaneHead() { for (const t of terms.values()) updatePaneHeader(t); }
 
 // ============================================================== the pane grid
 // Each conversation tab owns a layout tree, the same shape VS Code's grid uses:
@@ -693,8 +685,14 @@ function computeRects(node, x, y, w, h, panes, sashes) {
 function ensureLayout() {
   const mine = [...terms.values()].filter(t => convOf(t) === activeConv);
   const root = rootOf(activeConv);
-  // prune terminals that have gone away
-  for (const id of leafIds(root)) if (!terms.has(id)) layoutRemove(activeConv, id);
+  // Drop leaves that no longer belong here: the terminal has gone away, or it
+  // has moved to another tab (an assistant claiming a Local terminal changes
+  // which conversation owns it). Without this it would keep rendering in the
+  // grid of the tab it left.
+  for (const id of leafIds(root)) {
+    const t = terms.get(id);
+    if (!t || convOf(t) !== activeConv) layoutRemove(activeConv, id);
+  }
   if (!rootOf(activeConv) && mine.length) {
     const seed = mine.find(t => t.id === activeTerm) ?? mine[0];
     setRoot(activeConv, { t: 'leaf', id: seed.id });
@@ -741,7 +739,7 @@ const $drop = document.getElementById('dropLayer');
 const $hint = document.getElementById('dropHint');
 let sashEls = [];
 
-function applyLayout() {
+function applyLayout(quick = false) {
   // In history mode the pane area is display:none, so its box is 0x0 - laying
   // out against that would fit every terminal to nothing.
   if (historyMode) {
@@ -768,16 +766,28 @@ function applyLayout() {
     t.el.style.width = r.w + 'px'; t.el.style.height = r.h + 'px';
   }
 
-  for (const el of sashEls) el.remove();
-  sashEls = sashes.map(s => {
+  // Reuse the sash elements. Recreating them every layout would destroy the one
+  // holding the pointer capture mid-drag, which is what made the divider fall
+  // behind a quick mouse and then stop following it altogether.
+  while (sashEls.length > sashes.length) sashEls.pop().remove();
+  while (sashEls.length < sashes.length) {
     const el = document.createElement('div');
-    el.className = 'sash ' + s.dir;
+    el.addEventListener('pointerdown', ev => startSash(ev, el));
+    $panes.appendChild(el);
+    sashEls.push(el);
+  }
+  sashes.forEach((s, i) => {
+    const el = sashEls[i];
+    el.className = 'sash ' + s.dir + (el.classList.contains('dragging') ? ' dragging' : '');
     el.style.left = s.x + 'px'; el.style.top = s.y + 'px';
     el.style.width = s.w + 'px'; el.style.height = s.h + 'px';
-    el.onpointerdown = ev => startSash(ev, el, s, box);
-    $panes.appendChild(el);
-    return el;
+    el._sash = s;                 // live handle data, re-read on every drag tick
+    el._box = box;
   });
+
+  // Resizing only needs geometry; re-fitting every terminal and telling every
+  // PTY about it on each mouse move is what made the drag feel heavy.
+  if (quick) return;
 
   // one fit per visible terminal, after the browser has applied the new sizes
   requestAnimationFrame(() => {
@@ -797,29 +807,49 @@ function applyLayout() {
 }
 
 // ---- sash dragging: move one boundary, leave the rest of the grid alone
-function startSash(ev, el, s, box) {
+// Tracking lives on the WINDOW, not the sash: the pointer routinely outruns the
+// 6px handle, and it must keep following the mouse anywhere on screen (even
+// outside the app) until the button comes up.
+function startSash(ev, el) {
+  const s = el._sash, box = el._box;
+  if (!s) return;
   ev.preventDefault();
-  el.setPointerCapture(ev.pointerId);
   el.classList.add('dragging');
+  document.body.style.cursor = s.dir === 'row' ? 'col-resize' : 'row-resize';
   const horiz = s.dir === 'row';
   const total = (horiz ? box.width : box.height) - EDGE * 2;
   const pair = s.node.sz[s.i] + s.node.sz[s.i + 1];
   const start = horiz ? ev.clientX : ev.clientY;
   const from = s.node.sz[s.i];
-  const move = e => {
-    const d = ((horiz ? e.clientX : e.clientY) - start) / total;
+  let pending = start, raf = 0;
+
+  const apply = () => {
+    raf = 0;
+    const d = (pending - start) / total;
     const lo = 0.08, hi = pair - 0.08;                 // never squeeze a pane to nothing
     s.node.sz[s.i] = Math.min(hi, Math.max(lo, from + d));
     s.node.sz[s.i + 1] = pair - s.node.sz[s.i];
-    applyLayout();
+    applyLayout(true);                                 // geometry only while dragging
+  };
+  // Coalesce to one update per frame. Pointer events fire far faster than the
+  // screen refreshes, and doing a full layout per event is what made the
+  // divider lag behind the cursor.
+  const move = e => {
+    pending = horiz ? e.clientX : e.clientY;
+    if (!raf) raf = requestAnimationFrame(apply);
   };
   const up = () => {
-    el.removeEventListener('pointermove', move);
-    el.removeEventListener('pointerup', up);
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    if (raf) { cancelAnimationFrame(raf); apply(); }
     el.classList.remove('dragging');
+    document.body.style.cursor = '';
+    applyLayout();          // settle: re-fit the terminals and tell the PTYs once
   };
-  el.addEventListener('pointermove', move);
-  el.addEventListener('pointerup', up);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
 }
 
 // ---- drag a terminal onto a pane edge to dock it there
@@ -920,10 +950,11 @@ function addTerm(m) {
   strip.className = 'pstrip';
   strip.draggable = true;
   strip.title = 'Drag to dock this terminal left / right / above / below another';
-  strip.innerHTML = `<span class="nm"></span><span class="sh"></span>` +
-                    `<span class="sp"></span><span class="x">&#10005;</span>`;
-  strip.querySelector('.nm').textContent = m.name;
-  strip.querySelector('.sh').textContent = m.shell;
+  strip.innerHTML =
+    `<span class="phName"></span><span class="phId phdim"></span>` +
+    `<span class="phShell phchip"></span><span class="phKey phchip"></span>` +
+    `<span class="phspacer"></span><span class="phChat phdim"></span>` +
+    `<span class="phStatus"></span><span class="x">&#10005;</span>`;
   strip.addEventListener('dragstart', ev => beginTermDrag(ev, m.id));
   // focus only - no relayout, or the grid rebuilds under the pointer and the
   // drag never gets off the ground
@@ -979,6 +1010,7 @@ function addTerm(m) {
   terms.set(m.id, { id: m.id, name: m.name, shell: m.shell, shortId: m.shortId, term, fit, el, strip,
     conv: m.tab && m.tab !== 'Local' ? m.tab : '', key: m.key || '',
     controlAgo: -1, activeAgo: -1, unseen: false, liveUntil: 0 });
+  updatePaneHeader(terms.get(m.id));
   // a new terminal opens in the focused pane, like a new editor in the active group
   const conv = convOf(terms.get(m.id));
   if (conv === activeConv) showInFocusedPane(m.id); else activeTerm = m.id;
@@ -1026,25 +1058,26 @@ bridge?.addEventListener('message', ev => {
       if (!t) break;
       const conv = m.controller || '';
       const convChanged = conv !== t.conv;
+      const oldConv = convOf(t);      // the tab it is leaving, if it moves
       const nameChanged = m.name && m.name !== t.name;
-      if (nameChanged) {
-        t.name = m.name;
-        const nm = t.strip?.querySelector('.nm');
-        if (nm) nm.textContent = m.name;
-      }
+      if (nameChanged) t.name = m.name;
       // A claim rewrites the session's tab and key, so the terminal visibly
       // moves out of Local and the header picks up its new key.
       if (m.key !== undefined && m.key !== t.key) t.key = m.key;
       t.conv = conv; t.controlAgo = m.controlAgo; t.activeAgo = m.activeAgo;
-      if (nameChanged && !convChanged) { renderList(); updatePaneHead(); }
-      if (convChanged) renderAll();
+      if (nameChanged && !convChanged) renderList();
+      if (convChanged) {
+        // it belongs to a different tab now - take it out of the old tab's grid
+        layoutRemove(oldConv, m.id);
+        renderAll();
+      }
       else {
         if (t.row) {
           t.row.classList.toggle('controlled', m.controlAgo >= 0 && m.controlAgo < 120);
         }
         paintIndicators();
-        if (m.id === activeTerm) updatePaneHead();
       }
+      updatePaneHeader(t);      // each pane shows its OWN live status
       break;
     }
     case 'searchResults': showResults(m); break;
