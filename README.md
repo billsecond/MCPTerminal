@@ -50,18 +50,20 @@ tool — and it deserves a clear-eyed disclaimer:
 ## Contents
 
 1. [Quick start](#quick-start)
-2. [Access keys](#access-keys)
-3. [The session flow](#the-session-flow)
-4. [Status indicators](#status-indicators)
-4. [The `info` command](#the-info-command)
-5. [Session files explained](#session-files-explained)
-6. [CLI reference](#cli-reference)
-7. [MCP server](#mcp-server)
-8. [Architecture](#architecture)
-9. [Building from source & releases](#building-from-source--releases)
-10. [Platform notes](#platform-notes)
-11. [Security & privacy](#security--privacy)
-12. [Troubleshooting](#troubleshooting)
+2. [Updating](#updating)
+3. [Access keys](#access-keys)
+4. [The session flow](#the-session-flow)
+5. [Status indicators](#status-indicators)
+6. [The `info` command](#the-info-command)
+7. [Session files explained](#session-files-explained)
+8. [CLI reference](#cli-reference)
+9. [MCPTerminal Studio](#mcpterminal-studio)
+10. [MCP server](#mcp-server)
+11. [Architecture](#architecture)
+12. [Building from source & releases](#building-from-source--releases)
+13. [Platform notes](#platform-notes)
+14. [Security & privacy](#security--privacy)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -116,6 +118,72 @@ MCPTerminal
 
 Installs to `~/.local/bin/MCPTerminal`. Requires `script(1)` (util-linux or
 busybox — present on virtually every distro). Verified working under WSL2 Ubuntu.
+
+### Updating
+
+**Close Studio and any MCPTerminal windows first** — a running Studio holds its
+own executable open, and the copy will fail with "file in use".
+
+The one-command installer is also the updater. Re-running it fast-forwards the
+source it keeps in `%LOCALAPPDATA%\MCPTerminal\source` (cloning it the first
+time), rebuilds, and reinstalls over the top; your session logs, access keys and
+tab layout are untouched.
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/billsecond/MCPTerminal/main/setup/get.ps1 | iex"
+```
+```bash
+curl -fsSL https://raw.githubusercontent.com/billsecond/MCPTerminal/main/setup/get.sh | sh
+```
+
+**From your own working copy** — use this if you develop on it, since the
+installer only ever updates its own clone, and it pulls `--ff-only` (so it
+refuses rather than merging over local commits). Run these from wherever you
+cloned the repo:
+
+```powershell
+git pull
+```
+```powershell
+pwsh -File setup\install.ps1
+```
+
+The installer re-asks each question, so an update is also how you change your
+mind: add a client you skipped, drop one you no longer use, or re-register the
+Windows Terminal profiles. Answer `n` to anything you want left alone, or pass
+`-Yes` to accept every prompt unattended.
+
+**Rebuilding just the app or Studio** while developing (no reinstall):
+
+```powershell
+dotnet build app -c Release
+```
+```powershell
+dotnet build studio -c Release
+```
+
+Studio locks its own binary while it runs, so stop it before rebuilding:
+
+```powershell
+Stop-Process -Name MCPTerminalStudio -Force
+```
+
+**After any update, restart your assistant.** MCP clients read their server
+config once at startup, so a running chat keeps using the old server until it is
+restarted.
+
+To confirm the update landed — which commit you are on, and that the installed
+binary was actually replaced:
+
+```powershell
+git log --oneline -1
+```
+```powershell
+dir $env:LOCALAPPDATA\Programs\MCPTerminal\MCPTerminal.exe
+```
+```powershell
+claude mcp list
+```
 
 ### Uninstall
 
