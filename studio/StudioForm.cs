@@ -347,6 +347,9 @@ internal static class StudioProgram
         }
 
         ApplicationConfiguration.Initialize();
+        // Shown on EVERY launch, by design: the user must re-accept that
+        // connected MCP clients get full control of this system.
+        if (!DisclaimerForm.ShowAndConfirm()) return;
         Application.Run(new StudioForm(root));
     }
 }

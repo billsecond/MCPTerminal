@@ -33,6 +33,39 @@ function Ask([string]$question, [string]$detail) {
     return ($a -eq '' -or $a -match '^[Yy]')
 }
 
+# Merge mcpServers.mcpterminal into a JSON-config MCP client (Claude Desktop,
+# Cursor, Windsurf). Creates the file if missing, preserves everything else.
+# $serverPath is set during install; -Remove never uses it.
+function Register-JsonClient([string]$clientName, [string]$configPath, [switch]$Remove) {
+    try {
+        $cfg = if (Test-Path $configPath) { Get-Content $configPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+        if (-not $cfg) { $cfg = [pscustomobject]@{} }
+        if (-not ($cfg.PSObject.Properties.Name -contains 'mcpServers')) {
+            $cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{})
+        }
+        if ($Remove) {
+            if ($cfg.mcpServers.PSObject.Properties.Name -contains 'mcpterminal') {
+                $cfg.mcpServers.PSObject.Properties.Remove('mcpterminal')
+                $cfg | ConvertTo-Json -Depth 32 | Set-Content $configPath -Encoding UTF8
+                Write-Host "  $clientName - mcpterminal removed." -ForegroundColor Green
+            }
+            return
+        }
+        $entry = [pscustomobject]@{ command = 'node'; args = @($serverPath) }
+        if ($cfg.mcpServers.PSObject.Properties.Name -contains 'mcpterminal') {
+            $cfg.mcpServers.mcpterminal = $entry
+        } else {
+            $cfg.mcpServers | Add-Member -NotePropertyName mcpterminal -NotePropertyValue $entry
+        }
+        New-Item -ItemType Directory -Path (Split-Path $configPath) -Force | Out-Null
+        if (Test-Path $configPath) { Copy-Item $configPath "$configPath.mcpterminal-backup" -Force }
+        $cfg | ConvertTo-Json -Depth 32 | Set-Content $configPath -Encoding UTF8
+        Write-Host "  $clientName registered ($configPath)." -ForegroundColor Green
+    } catch {
+        Write-Host "  $clientName registration failed: $_" -ForegroundColor Yellow
+    }
+}
+
 function Show-Disclaimer {
     Write-Host ''
     Write-Host '  ============================================================' -ForegroundColor Yellow
@@ -51,8 +84,11 @@ function Show-Disclaimer {
     Write-Host '     the screen - including secrets on command lines - is captured.' -ForegroundColor Gray
     Write-Host '   * Anyone able to write to your user profile can inject commands' -ForegroundColor Gray
     Write-Host '     into your sessions. Do not use on a machine you do not trust.' -ForegroundColor Gray
-    Write-Host '   * Provided AS IS, without warranty (MIT). You are responsible' -ForegroundColor Gray
-    Write-Host '     for what gets run.' -ForegroundColor Gray
+    Write-Host '   * Provided AS IS, WITHOUT WARRANTY OF ANY KIND (MIT). The' -ForegroundColor Gray
+    Write-Host '     author(s) will NOT be held responsible or liable for any' -ForegroundColor Gray
+    Write-Host '     damage, data loss, or other consequence of using this tool.' -ForegroundColor Gray
+    Write-Host '     By continuing you assume ALL responsibility for what' -ForegroundColor Gray
+    Write-Host '     connected clients do on this system.' -ForegroundColor Gray
     Write-Host ''
     if (-not (Ask 'Do you understand and want to continue?' 'Answer n to abort the installation.')) {
         Write-Host '  Aborted - nothing was installed.' -ForegroundColor Yellow
@@ -100,6 +136,12 @@ if ($Uninstall) {
     if (Get-Command claude -ErrorAction SilentlyContinue) {
         claude mcp remove --scope user mcpterminal 2>$null | Out-Null
         Write-Host '  MCP server unregistered.' -ForegroundColor Green
+    }
+    foreach ($c in @(
+        @{ n = 'Claude Desktop'; p = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json' },
+        @{ n = 'Cursor'; p = Join-Path $env:USERPROFILE '.cursor\mcp.json' },
+        @{ n = 'Windsurf'; p = Join-Path $env:USERPROFILE '.codeium\windsurf\mcp_config.json' })) {
+        if (Test-Path $c.p) { Register-JsonClient $c.n $c.p -Remove }
     }
     Write-Host ''
     Write-Host '  MCPTerminal uninstalled.' -ForegroundColor Cyan
@@ -153,18 +195,46 @@ if (Test-Path (Join-Path $studioBin 'MCPTerminalStudio.exe')) {
     }
 }
 
-# MCP server registration (this is what lets an assistant drive terminals)
+# MCP server registration (this is what lets an assistant drive terminals).
+# Each client is opt-in; pick only the ones you actually use.
 $serverPath = (Resolve-Path (Join-Path $PSScriptRoot '..\mcp\server.mjs')).Path
+
+$claudeDesktopCfg = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'
+$cursorCfg = Join-Path $env:USERPROFILE '.cursor\mcp.json'
+$windsurfCfg = Join-Path $env:USERPROFILE '.codeium\windsurf\mcp_config.json'
+
+Write-Host ''
+Write-Host '  MCP client registration - choose which assistants may use these terminals.' -ForegroundColor Cyan
+Write-Host '  (Each one you register gets the full-control access described above.)' -ForegroundColor DarkGray
+
+# Claude Code CLI (separate config from Claude Desktop - registering both is fine)
 if (Get-Command claude -ErrorAction SilentlyContinue) {
-    if (Ask 'Register the MCP server so AI assistants can use these terminals?' "Runs: claude mcp add --scope user mcpterminal -- node `"$serverPath`"") {
+    if (Ask 'Register with Claude Code (CLI)?' "Runs: claude mcp add --scope user mcpterminal -- node `"$serverPath`"") {
         claude mcp add --scope user mcpterminal -- node $serverPath 2>&1 | Out-Null
-        Write-Host '  MCP server registered globally (verify with: claude mcp list).' -ForegroundColor Green
+        Write-Host '  Claude Code registered (verify with: claude mcp list).' -ForegroundColor Green
     }
 } else {
-    Write-Host ''
-    Write-Host '  (Claude Code CLI not found - register the MCP server manually:)' -ForegroundColor DarkGray
+    Write-Host '  (Claude Code CLI not found - skipping. Manual command:)' -ForegroundColor DarkGray
     Write-Host "    claude mcp add --scope user mcpterminal -- node `"$serverPath`"" -ForegroundColor DarkGray
 }
+
+if (Test-Path (Join-Path $env:APPDATA 'Claude')) {
+    if (Ask 'Register with Claude Desktop?' "Adds mcpterminal to $claudeDesktopCfg") {
+        Register-JsonClient 'Claude Desktop' $claudeDesktopCfg
+    }
+} else { Write-Host '  (Claude Desktop not found - skipping)' -ForegroundColor DarkGray }
+
+if (Test-Path (Join-Path $env:USERPROFILE '.cursor')) {
+    if (Ask 'Register with Cursor?' "Adds mcpterminal to $cursorCfg") {
+        Register-JsonClient 'Cursor' $cursorCfg
+    }
+} else { Write-Host '  (Cursor not found - skipping)' -ForegroundColor DarkGray }
+
+if (Test-Path (Join-Path $env:USERPROFILE '.codeium')) {
+    if (Ask 'Register with Windsurf?' "Adds mcpterminal to $windsurfCfg") {
+        Register-JsonClient 'Windsurf' $windsurfCfg
+    }
+} else { Write-Host '  (Windsurf not found - skipping)' -ForegroundColor DarkGray }
 
 # Assistant routing rules
 $claudeMd = Join-Path $env:USERPROFILE '.claude\CLAUDE.md'

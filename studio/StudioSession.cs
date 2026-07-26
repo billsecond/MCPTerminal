@@ -64,6 +64,7 @@ public sealed class StudioSession
 
         string initPath = Path.Combine(s.SessionDir, ShellSupport.InitFileName(s.Shell));
         ShellSupport.WriteInitScript(s.Shell, initPath, s.Name, s.Id, s.SessionDir, s._stateFile);
+        if (s.Shell == "bash-wsl") ShellSupport.PushInitToWsl(initPath, wslDistro);
         s.Register(controller);
 
         string cmdline = ShellSupport.BuildShellCommand(s.Shell, initPath, wslDistro, isWindows: true);

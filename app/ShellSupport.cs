@@ -97,13 +97,54 @@ public static class ShellSupport
         // them in `bash -c "..."`: the nested quoting was being mangled before
         // it reached bash, so --rcfile was dropped and the session silently
         // started without our init (no info command, no connected-star prompt).
-        // The session path lives under LOCALAPPDATA and contains no spaces.
+        // The rcfile lives at a WSL-native /tmp path (see PushInitToWsl): the
+        // 9p /mnt/c mount doesn't reliably see a directory created on the
+        // Windows side milliseconds earlier, so referencing the session dir
+        // via /mnt/c made bash silently skip the init.
         "bash-wsl" => $"wsl.exe {(string.IsNullOrEmpty(wslDistro) ? "" : $"-d {wslDistro} ")}" +
-                      $"-- bash --rcfile {ToWslPath(initPath)} -i",
+                      $"-- bash --rcfile {WslInitTarget(initPath)} -i",
         "bash" => $"bash --rcfile '{initPath}' -i",
         "sh" => "sh -i",
         _ => throw new InvalidOperationException($"unknown shell '{shell}'"),
     };
+
+    // WSL-native location for a bash-wsl session's init script. /tmp is inside
+    // the distro (tmpfs), so it is visible immediately - unlike the session dir
+    // under /mnt/c. Derived from the session guid in initPath's directory name.
+    public static string WslInitTarget(string initPath)
+    {
+        string guid = Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(initPath))) ?? "session";
+        return "/tmp/mcpterminal-" + SanitizeName(guid, "session") + ".bash";
+    }
+
+    // Copy the just-written init script into the distro via wsl.exe stdin so
+    // bash can load it from a native path. Call after WriteInitScript for
+    // shell == "bash-wsl".
+    public static void PushInitToWsl(string initPath, string wslDistro)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("wsl.exe")
+        {
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardInputEncoding = new System.Text.UTF8Encoding(false),
+        };
+        if (!string.IsNullOrEmpty(wslDistro)) { psi.ArgumentList.Add("-d"); psi.ArgumentList.Add(wslDistro); }
+        psi.ArgumentList.Add("--");
+        psi.ArgumentList.Add("sh");
+        psi.ArgumentList.Add("-c");
+        string target = WslInitTarget(initPath);
+        psi.ArgumentList.Add($"umask 077; cat > {target}");
+        using var p = System.Diagnostics.Process.Start(psi)
+            ?? throw new InvalidOperationException("failed to start wsl.exe");
+        p.StandardInput.Write(File.ReadAllText(initPath).Replace("\r\n", "\n"));
+        p.StandardInput.Close();
+        if (!p.WaitForExit(15000))
+        {
+            try { p.Kill(); } catch { }
+            throw new InvalidOperationException("timed out writing WSL init script");
+        }
+    }
 
     public static void WriteInitScript(string shell, string initPath, string name, string sessionId,
         string sessionDir, string stateFile)

@@ -231,7 +231,11 @@ internal static class Program
     static bool IsBashLike => Shell is "bash" or "bash-wsl" or "sh";
     static string InitPath => Path.Combine(SessionDir, ShellSupport.InitFileName(Shell));
     static string BuildShellCommand() => ShellSupport.BuildShellCommand(Shell, InitPath, WslDistro, IsWin);
-    static void WriteShellInit() => ShellSupport.WriteInitScript(Shell, InitPath, Name, SessionId, SessionDir, StateFile);
+    static void WriteShellInit()
+    {
+        ShellSupport.WriteInitScript(Shell, InitPath, Name, SessionId, SessionDir, StateFile);
+        if (Shell == "bash-wsl") ShellSupport.PushInitToWsl(InitPath, WslDistro);
+    }
     // ------------------------------------------------------------------ pumps
     static void OutputPump(Stream ptyOut)
     {
