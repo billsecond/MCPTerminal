@@ -35,13 +35,19 @@ const TOOLS = [
         cwd: { type: 'string', description: 'Starting directory' },
         wslDistro: { type: 'string', description: 'WSL distro for bash-wsl (e.g. Ubuntu)' },
         controller: { type: 'string', description: 'Label for THIS chat/project - claims the session for this conversation and gives it its own tab in Studio. Always pass it.' },
+        key: { type: 'string', description: "Access key of an existing tab to add this terminal to. Omit to get a NEW tab with a freshly minted key (returned in the output - keep it, every later call needs it)." },
       },
     },
   },
   {
     name: 'terminal_list',
     description: 'List MCPTerminal sessions (guid, name, shell, status).',
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Access key. Only terminals this key unlocks are listed; others are not shown at all.' },
+      },
+    },
   },
   {
     name: 'terminal_connect',
@@ -51,9 +57,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Session code: name (word-NN) or guid prefix' },
+        key: { type: 'string', description: "Access key for this terminal (the user reads it off the terminal window). Required." },
         controller: { type: 'string', description: 'Label describing this chat/project' },
       },
-      required: ['id'],
+      required: ['id', 'key'],
     },
   },
   {
@@ -65,10 +72,11 @@ const TOOLS = [
       properties: {
         id: { type: 'string', description: 'Session code: name (word-NN) or guid prefix' },
         command: { type: 'string' },
+        key: { type: 'string', description: "Access key for this terminal's tab. Required." },
         controller: { type: 'string', description: 'Label describing this chat/project (shown by the info command)' },
         timeoutSec: { type: 'number' },
       },
-      required: ['id', 'command'],
+      required: ['id', 'command', 'key'],
     },
   },
   {
@@ -80,8 +88,9 @@ const TOOLS = [
       properties: {
         id: { type: 'string', description: 'Session code' },
         keys: { type: 'string', description: 'Keys to send, e.g. "Y{ENTER}" or "{DOWN}{DOWN}{ENTER}"' },
+        key: { type: 'string', description: "Access key for this terminal's tab. Required." },
       },
-      required: ['id', 'keys'],
+      required: ['id', 'keys', 'key'],
     },
   },
   {
@@ -89,8 +98,12 @@ const TOOLS = [
     description: "Read the tail of a session's transcript (includes what the user typed).",
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, tail: { type: 'number' } },
-      required: ['id'],
+      properties: {
+        id: { type: 'string' },
+        tail: { type: 'number' },
+        key: { type: 'string', description: "Access key for this terminal's tab. Required." },
+      },
+      required: ['id', 'key'],
     },
   },
   {
@@ -99,23 +112,34 @@ const TOOLS = [
       'Rename a session to describe its PURPOSE (e.g. "mod-build", "wsl-tests"). Keep terminal names meaningful: rename when you repurpose one.',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, name: { type: 'string' } },
-      required: ['id', 'name'],
+      properties: {
+        id: { type: 'string' },
+        name: { type: 'string' },
+        key: { type: 'string', description: "Access key for this terminal's tab. Required." },
+      },
+      required: ['id', 'name', 'key'],
     },
   },
   {
     name: 'terminal_kill',
     description: 'End a session (its transcript is preserved).',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        key: { type: 'string', description: "Access key for this terminal's tab. Required." },
+      },
+      required: ['id', 'key'],
+    },
   },
 ];
 
 // Every mutating call returns the current terminal roster, so the model always
 // knows what exists, who owns it, and what each one is doing - without having
 // to remember or call terminal_list again.
-async function withState(res) {
+async function withState(res, key) {
   try {
-    const list = await runCli(['list']);
+    const list = await runCli(key ? ['list', '-Key', key] : ['list']);
     return { ...res, text: `${res.text}\n\n--- terminals now ---\n${list.text}` };
   } catch {
     return res;
@@ -131,32 +155,33 @@ async function callTool(name, args = {}) {
       if (args.cwd) a.push('-Cwd', args.cwd);
       if (args.wslDistro) a.push('-WslDistro', args.wslDistro);
       if (args.controller) a.push('-Controller', args.controller);
-      return withState(await runCli(a));
+      if (args.key) a.push('-Key', args.key);
+      return withState(await runCli(a), args.key);
     }
     case 'terminal_list':
-      return runCli(['list']);
+      return runCli(args.key ? ['list', '-Key', args.key] : ['list']);
     case 'terminal_connect': {
-      const a = ['connect', '-Id', args.id];
+      const a = ['connect', '-Id', args.id, '-Key', args.key ?? ''];
       if (args.controller) a.push('-Controller', args.controller);
-      return withState(await runCli(a));
+      return withState(await runCli(a), args.key);
     }
     case 'terminal_exec': {
-      const a = ['exec', '-Id', args.id, '-Command', args.command];
+      const a = ['exec', '-Id', args.id, '-Command', args.command, '-Key', args.key ?? ''];
       if (args.controller) a.push('-Controller', args.controller);
       if (args.timeoutSec) a.push('-TimeoutSec', String(args.timeoutSec));
-      return withState(await runCli(a));
+      return withState(await runCli(a), args.key);
     }
     case 'terminal_keys':
-      return runCli(['keys', '-Id', args.id, '-Keys', args.keys]);
+      return runCli(['keys', '-Id', args.id, '-Keys', args.keys, '-Key', args.key ?? '']);
     case 'terminal_read': {
-      const a = ['read', '-Id', args.id];
+      const a = ['read', '-Id', args.id, '-Key', args.key ?? ''];
       if (args.tail) a.push('-Tail', String(args.tail));
       return runCli(a);
     }
     case 'terminal_rename':
-      return runCli(['rename', '-Id', args.id, '-Name', args.name]);
+      return runCli(['rename', '-Id', args.id, '-Name', args.name, '-Key', args.key ?? '']);
     case 'terminal_kill':
-      return runCli(['kill', '-Id', args.id]);
+      return runCli(['kill', '-Id', args.id, '-Key', args.key ?? '']);
     default:
       return { code: -1, text: `unknown tool: ${name}` };
   }
@@ -220,17 +245,31 @@ async function handleLine(line) {
           'controller under one top tab, so a stable id keeps your terminals together',
           'and stops other chats from landing in your tab.',
           '',
-          'ONE CONVERSATION = ITS OWN TERMINALS. terminal_list shows a Controller',
-          'column naming the chat that owns each session - consult it before acting.',
-          'Only use sessions whose Controller is YOUR id (or "(unclaimed)"); never',
-          'touch one owned by a different chat, the user is working in it there. If',
-          'none of yours fits, call terminal_new - having several terminals is normal',
-          'and encouraged: keep one per concern (build, tests, logs, git) and rotate',
-          'between them by id. Name each for its purpose with terminal_rename.',
+          'ACCESS KEYS - THIS IS AUTHENTICATION, TREAT IT AS SUCH.',
+          'Every terminal belongs to a tab, and every tab has one random access key',
+          '(looks like mt_a1b2c3d4e5f6). You cannot read, type into, rename or kill a',
+          'terminal without passing its key as `key`. Terminals you hold no key for',
+          'are not even listed - other conversations are invisible to you, and yours',
+          'are invisible to them.',
+          '- Your FIRST call should be terminal_new with your controller id and NO key.',
+          '  That mints a new tab and returns its ACCESS KEY. Remember that key and',
+          '  pass it on every subsequent call, including later terminal_new calls, so',
+          '  all your terminals land in the same tab.',
+          '- If you lose the key you cannot get it back: the user must read it off the',
+          '  terminal window (it is in the header and in `info` output) and paste it.',
+          '  Ask them for it rather than guessing.',
+          '- If a call is denied, do NOT retry or probe other ids. Either ask the user',
+          '  for the key, or make your own terminal with terminal_new.',
+          '',
+          'ONE CONVERSATION = ITS OWN TERMINALS. Keep one terminal per concern (build,',
+          'tests, logs, git) within your tab and rotate between them by id. Name each',
+          'for its purpose with terminal_rename.',
           '',
           'CONNECTING: if the user pastes session info - text or a screenshot showing',
-          '"session code: <name>" - do not deliberate, immediately call terminal_connect',
-          'with that code. Codes look like ps-1 / cedar-10 or an 8+ char guid prefix.',
+          '"session code: <name>" and "access key: mt_..." - do not deliberate,',
+          'immediately call terminal_connect with that code AND key. Codes look like',
+          'ps-1 / cedar-10 or an 8+ char guid prefix. If they give you a code but no',
+          'key, ask for the key - the call will be denied without it.',
           '',
           'Use terminal_read to see what the user typed; terminal_keys for interactive',
           'prompts and TUI apps (e.g. "Y{ENTER}", "{CTRL+C}").',

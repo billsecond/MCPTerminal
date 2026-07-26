@@ -35,6 +35,8 @@ public sealed class StudioForm : Form
     {
         _root = root;
         Text = "MCPTerminal Studio";
+        var ic = DisclaimerForm.LoadAppIcon();
+        if (ic != null) Icon = ic;
         BackColor = Color.FromArgb(24, 24, 27);
         Width = 1400;
         Height = 860;
@@ -183,10 +185,11 @@ public sealed class StudioForm : Form
     }
 
     // -------------------------------------------------------------- terminals
-    void CreateTerm(string shell, string name, string cwd, string wslDistro, string controller = null)
+    void CreateTerm(string shell, string name, string cwd, string wslDistro, string controller = null,
+        string accessKey = null, bool trusted = true)
     {
         StudioSession s;
-        try { s = StudioSession.Create(_root, shell, name, cwd, wslDistro, controller); }
+        try { s = StudioSession.Create(_root, shell, name, cwd, wslDistro, controller, accessKey, trusted); }
         catch (Exception ex)
         {
             // Surface failures somewhere the user (and I) can actually read -
@@ -226,7 +229,12 @@ public sealed class StudioForm : Form
     void AnnounceTerm(StudioSession s)
     {
         if (_uiReady)
-            Post(new { type = "termAdded", id = s.Id, name = s.Name, shell = s.Shell, shortId = s.Id[..8] });
+            Post(new
+            {
+                type = "termAdded", id = s.Id, name = s.Name, shell = s.Shell, shortId = s.Id[..8],
+                // shown in the pane header so the user can hand it to an assistant
+                tab = s.TabLabel, key = s.AccessKey,
+            });
     }
 
     void PushStatus()
@@ -256,8 +264,13 @@ public sealed class StudioForm : Form
             try { req = JsonNode.Parse(File.ReadAllText(f)) as JsonObject; } catch { }
             try { File.Delete(f); } catch { }
             if (req == null) continue;
+            // Requests come from the CLI / an MCP client: untrusted, so the
+            // access key decides which tab they may join.
+            bool trusted = false;
+            try { trusted = req["trusted"]?.GetValue<bool>() ?? false; } catch { }
             CreateTerm(req["shell"]?.GetValue<string>(), Null(req["name"]),
-                       Null(req["cwd"]), Null(req["wslDistro"]), Null(req["controller"]));
+                       Null(req["cwd"]), Null(req["wslDistro"]), Null(req["controller"]),
+                       Null(req["accessKey"]), trusted);
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
         }

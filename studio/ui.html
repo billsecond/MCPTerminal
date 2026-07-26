@@ -21,12 +21,57 @@
   /* ---- top tabstrip: conversations ---- */
   #tabs { display: flex; align-items: center; gap: 2px; background: var(--bg2);
     border-bottom: 1px solid var(--line); padding: 6px 8px 0 8px; user-select: none; }
-  .tab { padding: 7px 16px 8px; border-radius: 7px 7px 0 0; cursor: pointer;
-    color: var(--dim); background: transparent; max-width: 280px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
+  .tab { display: flex; align-items: center; gap: 7px; padding: 7px 12px 8px;
+    border-radius: 7px 7px 0 0; cursor: pointer;
+    color: var(--dim); background: transparent; max-width: 300px; white-space: nowrap; }
+  .tab .lbl { overflow: hidden; text-overflow: ellipsis; }
   .tab:hover { color: var(--fg); }
   .tab.active { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-bottom: 1px solid var(--bg); margin-bottom: -1px; }
+
+  /* ---- tabstrip indicators ----
+     Three independent signals, never merged into one light:
+       .tdot   state    green glow = interacting now, amber = idle, grey = none
+       .tnew   news     magenta pip, only for unseen output while you are away
+     A global live light sits at the top-left of the strip in its own gap. */
+  .tdot { width: 9px; height: 9px; border-radius: 50%; flex: none;
+    background: #3f3f46; transition: background .25s, box-shadow .25s; }
+  .tdot.idle { background: #fbbf24; box-shadow: 0 0 5px rgba(251,191,36,.7); }
+  .tdot.live { background: #22c55e; box-shadow: 0 0 8px #22c55e, 0 0 14px rgba(34,197,94,.75);
+    animation: pulse 1.1s ease-in-out infinite; }
+  .tnew { width: 7px; height: 7px; border-radius: 50%; flex: none; background: transparent; }
+  .tnew.has { background: #c084fc; box-shadow: 0 0 6px #c084fc; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+  /* global live light - own slot at the far left, with a gap after it */
+  #liveLight { width: 10px; height: 10px; border-radius: 50%; flex: none;
+    background: #2a2a30; margin: 0 12px 6px 4px; transition: background .25s, box-shadow .25s; }
+  #liveLight.live { background: #22c55e; box-shadow: 0 0 9px #22c55e, 0 0 18px rgba(34,197,94,.8);
+    animation: pulse 1.1s ease-in-out infinite; }
+
+  .tab .tx { visibility: hidden; color: var(--dim); flex: none; padding: 0 1px;
+    font-size: 11px; }
+  .tab:hover .tx { visibility: visible; }
+  .tab .tx:hover { color: #f87171; }
+
+  /* ---- confirm dialog ---- */
+  #confirmWrap { display: none; position: fixed; inset: 0; z-index: 90;
+    background: rgba(0,0,0,.55); align-items: center; justify-content: center; }
+  #confirmWrap.open { display: flex; }
+  #confirmBox { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 20px 22px; min-width: 380px; max-width: 520px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.6); }
+  #confirmBox h3 { font-size: 14px; margin-bottom: 8px; color: var(--fg); }
+  #confirmBox p { color: var(--dim); font-size: 12px; line-height: 1.5; margin-bottom: 14px; }
+  #confirmBox .row { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  #confirmBox .allwrap { display: flex; align-items: center; gap: 6px; color: var(--dim);
+    font-size: 12px; margin-bottom: 14px; cursor: pointer; }
+  #confirmBox button { border-radius: 6px; padding: 7px 16px; font-size: 12px;
+    cursor: pointer; border: 1px solid var(--line); background: var(--bg3); color: var(--fg); }
+  #confirmBox button.danger { background: #b91c1c; border-color: #b91c1c; color: #fff;
+    font-weight: 600; }
+  #confirmBox button:hover { border-color: var(--accent); }
+  #confirmBox button.danger:hover { background: #dc2626; border-color: #dc2626; }
   #tabs .spacer { flex: 1; }
   #tabs { overflow: hidden; }
   .tabwrap { position: relative; }
@@ -140,6 +185,7 @@
         <span id="phName">-</span>
         <span id="phId" class="phdim"></span>
         <span id="phShell" class="phchip"></span>
+        <span id="phKey" class="phchip" title="Access key - click to copy. An assistant needs this to use this terminal."></span>
         <span class="phspacer"></span>
         <span id="phChat" class="phdim"></span>
         <span id="phStatus"></span>
@@ -152,6 +198,19 @@
         <div id="histResults"><div class="muted">Type to search every session transcript.</div></div>
         <div id="histDoc" class="muted">Select a result to view its transcript.</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="confirmWrap">
+  <div id="confirmBox">
+    <h3 id="cfTitle">Close?</h3>
+    <p id="cfText"></p>
+    <label class="allwrap" id="cfAllWrap"><input type="checkbox" id="cfAll" />
+      <span id="cfAllText">Apply this answer to the rest</span></label>
+    <div class="row">
+      <button id="cfNo">Cancel</button>
+      <button id="cfYes" class="danger">Close</button>
     </div>
   </div>
 </div>
@@ -175,17 +234,44 @@ function send(o) { bridge?.postMessage(o); }
 // ---------------------------------------------------------------- rendering
 function convOf(t) { return t.conv && t.conv.length ? t.conv : 'Local'; }
 
+// A terminal counts as INTERACTING while output is flowing, and stays lit for
+// a further second so short bursts are still visible rather than a flicker.
+const LIVE_TAIL_MS = 1000;
+function isLive(t) {
+  if (t.closed) return false;
+  if (t.liveUntil && Date.now() < t.liveUntil) return true;
+  return t.activeAgo >= 0 && t.activeAgo < 3;
+}
+function convState(c) {
+  const own = [...terms.values()].filter(t => convOf(t) === c);
+  return {
+    live: own.some(isLive),
+    idle: own.some(t => !t.closed && t.controlAgo >= 0),
+    unseen: own.some(t => t.unseen),
+  };
+}
+
 function renderTabs() {
   const convs = [...new Set([...terms.values()].map(convOf))];
   if (!convs.includes(activeConv) && convs.length) activeConv = convs[0];
   $tabs.innerHTML = '';
 
+  // global live light: its own slot at the top-left of the strip
+  const live = document.createElement('div');
+  live.id = 'liveLight';
+  live.title = 'A terminal is interacting';
+  $tabs.appendChild(live);
+
   const mkTab = (c) => {
     const el = document.createElement('div');
     el.className = 'tab' + (!historyMode && c === activeConv ? ' active' : '');
-    el.textContent = c;
     el.title = c;
+    el.innerHTML = '<span class="tdot"></span><span class="lbl"></span>' +
+                   '<span class="tnew"></span><span class="tx">&#10005;</span>';
+    el.querySelector('.lbl').textContent = c;
     el.onclick = () => { historyMode = false; activeConv = c; renderAll(); };
+    el.querySelector('.tx').onclick = ev => { ev.stopPropagation(); closeConv(c); };
+    el.dataset.conv = c;
     return el;
   };
 
@@ -200,12 +286,16 @@ function renderTabs() {
   // Too many conversations to fit? Collapse them into a dropdown showing the
   // active one, so the strip never overflows or squeezes the History tab out.
   requestAnimationFrame(() => {
-    if (convs.length < 2 || $tabs.scrollWidth <= $tabs.clientWidth) return;
+    if (convs.length < 2 || $tabs.scrollWidth <= $tabs.clientWidth) { paintIndicators(); return; }
     $tabs.innerHTML = '';
+    $tabs.appendChild(live);
     const picker = document.createElement('div');
     picker.className = 'tab active picker';
-    picker.textContent = (historyMode ? 'Conversations' : activeConv) + '  ▾';
+    picker.innerHTML = '<span class="tdot"></span><span class="lbl"></span><span class="tnew"></span>';
+    picker.querySelector('.lbl').textContent =
+      (historyMode ? 'Conversations' : activeConv) + '  ▾';
     picker.title = 'Switch conversation';
+    picker.dataset.conv = activeConv;
     const menu = document.createElement('div');
     menu.className = 'tabmenu';
     for (const c of convs) {
@@ -227,7 +317,114 @@ function renderTabs() {
     $tabs.appendChild(wrap);
     const sp2 = document.createElement('div'); sp2.className = 'spacer'; $tabs.appendChild(sp2);
     $tabs.appendChild(h);
+    paintIndicators();
   });
+  paintIndicators();
+}
+
+// Repaint just the lights - cheap enough to run on a timer, so the green glow
+// fades out on its own when interaction stops instead of waiting for a message.
+function paintIndicators() {
+  let anyLive = false;
+  for (const el of $tabs.querySelectorAll('.tab[data-conv]')) {
+    const st = convState(el.dataset.conv);
+    if (st.live) anyLive = true;
+    const dot = el.querySelector('.tdot');
+    if (dot) {
+      dot.classList.toggle('live', st.live);
+      dot.classList.toggle('idle', !st.live && st.idle);
+      dot.title = st.live ? 'interacting now' : st.idle ? 'connected - idle' : 'no assistant connected';
+    }
+    const nw = el.querySelector('.tnew');
+    // unseen output is its own signal, never folded into the state dot
+    if (nw) {
+      const show = st.unseen && !(el.dataset.conv === activeConv && !historyMode);
+      nw.classList.toggle('has', show);
+      nw.title = show ? 'new output you have not seen' : '';
+    }
+  }
+  document.getElementById('liveLight')?.classList.toggle('live', anyLive);
+  for (const t of terms.values()) {
+    t.row?.classList.toggle('activity', isLive(t));
+  }
+}
+setInterval(paintIndicators, 400);
+
+// ------------------------------------------------------- confirm + tab close
+// One dialog, reused. "Apply to the rest" answers the remaining prompts in a
+// batch the same way, so closing a tab with five terminals asks once.
+let cfResolve = null;
+const $cfWrap = document.getElementById('confirmWrap');
+function confirmBox({ title, text, yes = 'Close', showAll = false, allText = '' }) {
+  return new Promise(resolve => {
+    document.getElementById('cfTitle').textContent = title;
+    document.getElementById('cfText').textContent = text;
+    document.getElementById('cfYes').textContent = yes;
+    const allWrap = document.getElementById('cfAllWrap');
+    const all = document.getElementById('cfAll');
+    all.checked = false;
+    allWrap.style.display = showAll ? 'flex' : 'none';
+    document.getElementById('cfAllText').textContent = allText || 'Apply this answer to the rest';
+    $cfWrap.classList.add('open');
+    cfResolve = ok => {
+      $cfWrap.classList.remove('open');
+      cfResolve = null;
+      resolve({ ok, all: all.checked });
+    };
+    document.getElementById('cfYes').focus();
+  });
+}
+document.getElementById('cfYes').onclick = () => cfResolve?.(true);
+document.getElementById('cfNo').onclick = () => cfResolve?.(false);
+$cfWrap.onclick = ev => { if (ev.target === $cfWrap) cfResolve?.(false); };
+document.addEventListener('keydown', ev => {
+  if (!cfResolve) return;
+  if (ev.key === 'Escape') cfResolve(false);
+  if (ev.key === 'Enter') cfResolve(true);
+});
+
+// Closing a conversation tab closes the terminals in it. Each live terminal is
+// confirmed, but "apply to the rest" collapses that to a single question.
+async function closeConv(c) {
+  const own = [...terms.values()].filter(t => convOf(t) === c);
+  const liveOnes = own.filter(t => !t.closed);
+  if (!liveOnes.length) {                       // only tombstones - just clear them
+    for (const t of own) { t.term.dispose(); t.el.remove(); terms.delete(t.id); }
+    if (!terms.has(activeTerm)) activeTerm = null;
+    renderAll();
+    return;
+  }
+  const first = await confirmBox({
+    title: `Close "${c}"?`,
+    text: liveOnes.length === 1
+      ? `This ends the terminal "${liveOnes[0].name}". Its transcript is kept in History.`
+      : `This ends ${liveOnes.length} terminals in this tab. Their transcripts are kept in History.`,
+    yes: liveOnes.length === 1 ? 'Close terminal' : `Close ${liveOnes.length} terminals`,
+    showAll: liveOnes.length > 1,
+    allText: 'Do the same for every terminal in this tab (do not ask again)',
+  });
+  if (!first.ok) return;
+  if (first.all || liveOnes.length === 1) {
+    for (const t of liveOnes) send({ type: 'closeTerm', id: t.id });
+    return;
+  }
+  // asked per terminal, with the option to stop asking part-way through
+  for (let i = 0; i < liveOnes.length; i++) {
+    const t = liveOnes[i];
+    const left = liveOnes.length - i;
+    const r = await confirmBox({
+      title: `Close "${t.name}"?`,
+      text: `${left} terminal(s) left in "${c}".`,
+      yes: 'Close terminal',
+      showAll: left > 1,
+      allText: `Do the same for the remaining ${left - 1}`,
+    });
+    if (r.ok) send({ type: 'closeTerm', id: t.id });
+    if (r.all) {
+      if (r.ok) for (const rest of liveOnes.slice(i + 1)) send({ type: 'closeTerm', id: rest.id });
+      return;
+    }
+  }
 }
 
 function renderList() {
@@ -269,6 +466,7 @@ function updatePaneHead() {
     document.getElementById('phName').textContent = '-';
     document.getElementById('phId').textContent = '';
     document.getElementById('phShell').textContent = '';
+    document.getElementById('phKey').textContent = '';
     document.getElementById('phChat').textContent = '';
     st.textContent = ''; st.className = '';
     return;
@@ -276,6 +474,10 @@ function updatePaneHead() {
   document.getElementById('phName').textContent = t.name;
   document.getElementById('phId').textContent = t.shortId ?? '';
   document.getElementById('phShell').textContent = t.shell;
+  const pk = document.getElementById('phKey');
+  pk.textContent = t.key ? 'key ' + t.key : '';
+  pk.style.cursor = t.key ? 'pointer' : '';
+  pk.onclick = () => { if (t.key) navigator.clipboard.writeText(t.key).catch(() => {}); };
   const chat = t.conv && t.conv.length ? t.conv : '';
   document.getElementById('phChat').textContent = chat ? 'chat: ' + chat : '';
   if (t.closed) {
@@ -359,7 +561,8 @@ function addTerm(m) {
     if (term.hasSelection()) { copySel(); term.clearSelection(); } else pasteClip();
   });
   terms.set(m.id, { id: m.id, name: m.name, shell: m.shell, shortId: m.shortId, term, fit, el,
-    conv: '', controlAgo: -1, activeAgo: -1, unseen: false });
+    conv: m.tab && m.tab !== 'Local' ? m.tab : '', key: m.key || '',
+    controlAgo: -1, activeAgo: -1, unseen: false, liveUntil: 0 });
   activeTerm = m.id;
   renderAll();
 }
@@ -379,6 +582,9 @@ bridge?.addEventListener('message', ev => {
       const t = terms.get(m.id);
       if (t) {
         t.term.write(b64ToBytes(m.b64));
+        // keep the green light on for a moment past the last byte
+        t.liveUntil = Date.now() + LIVE_TAIL_MS;
+        paintIndicators();
         // unseen-activity badge for terminals you are not looking at
         if (m.id !== activeTerm || historyMode) {
           if (!t.unseen) {
@@ -409,9 +615,9 @@ bridge?.addEventListener('message', ev => {
       if (convChanged) renderAll();
       else {
         if (t.row) {
-          t.row.classList.toggle('activity', m.activeAgo >= 0 && m.activeAgo < 3);
           t.row.classList.toggle('controlled', m.controlAgo >= 0 && m.controlAgo < 120);
         }
+        paintIndicators();
         if (m.id === activeTerm) updatePaneHead();
       }
       break;

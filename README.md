@@ -1,12 +1,18 @@
-# MCPTerminal
+<p align="center">
+  <img src="assets/logo-wide.png" alt="MCPTerminal" width="480">
+</p>
 
 **A shared terminal: one real shell that both you and an AI assistant can type into.**
 
-You open a terminal. It shows a session code. You paste that code into your AI chat.
-From that moment the assistant can type commands into *your* window — you watch them
-run live, you can type in the same shell yourself, and everything is logged. The
-window title tells you at all times whether the assistant is `[CONTROLLED]`,
-`[IDLE]`, or `[DISCONNECTED]`, and the prompt shows a cyan `*` while it's connected.
+You open a terminal. It shows a session code and an access key. You paste those into
+your AI chat. From that moment the assistant can type commands into *your* window —
+you watch them run live, you can type in the same shell yourself, and everything is
+logged. The window title tells you at all times whether the assistant is
+`[CONTROLLED]`, `[IDLE]`, or `[DISCONNECTED]`, and the prompt shows a cyan `*` while
+it's connected.
+
+Nothing can read or drive a terminal without its access key, so one conversation can
+never see or touch another's terminals — see [Access keys](#access-keys).
 
 The shell itself is 100% native — line editing, tab completion, colors, scrollback,
 full-screen apps — because it *is* a real shell on a real PTY. MCPTerminal adds a
@@ -44,8 +50,9 @@ tool — and it deserves a clear-eyed disclaimer:
 ## Contents
 
 1. [Quick start](#quick-start)
-2. [The session flow](#the-session-flow)
-3. [Status indicators](#status-indicators)
+2. [Access keys](#access-keys)
+3. [The session flow](#the-session-flow)
+4. [Status indicators](#status-indicators)
 4. [The `info` command](#the-info-command)
 5. [Session files explained](#session-files-explained)
 6. [CLI reference](#cli-reference)
@@ -139,6 +146,35 @@ Every session hosts one shell. Pick it at launch:
 The installer registers a Windows Terminal profile for each shell it detects,
 so they all appear in the new-tab dropdown. `--wsl-distro` (or the
 `MCPTERMINAL_WSL_DISTRO` env var) selects the distro for `bash-wsl`.
+
+---
+
+## Access keys
+
+Terminals are grouped into **tabs** — one tab per conversation. Every tab has a
+single random **access key** (`mt_a1b2c3d4e5f6`), and every terminal in it stores
+a copy. The key is authentication:
+
+- **Nothing can read, type into, rename or kill a terminal without its key.**
+  No key, no access — there is no fallback path.
+- **Terminals you hold no key for are not even listed.** `list` reports only what
+  your key unlocks, plus a count of how many are locked. One chat cannot discover
+  another chat's terminal names, let alone read their transcripts.
+- **Creating is always allowed.** An assistant with no key can still call `new` —
+  it just gets a brand new tab, with a brand new key, and cannot reach yours.
+- **You decide who gets in.** The key is printed in the terminal's own header, by
+  the `info` command, and on the pane header in Studio (click to copy). Handing it
+  to an assistant is how you grant access; that is the only way in.
+
+```
+mcpterm new    -Controller "my chat"          # mints a tab -> prints ACCESS KEY
+mcpterm exec   -Id ps-1 -Key mt_a1b2c3d4e5f6 -Command "git status"
+mcpterm list   -Key mt_a1b2c3d4e5f6           # only this tab's terminals
+```
+
+Lose the key and it cannot be recovered from outside — read it off the terminal
+window again. Tabs and their keys live in `tabs.json` under the data root, which
+is inside your user profile.
 
 ---
 

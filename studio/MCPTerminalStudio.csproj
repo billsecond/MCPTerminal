@@ -13,12 +13,20 @@
     <Product>MCPTerminal Studio</Product>
     <Description>Terminal manager for MCPTerminal shared sessions - tabs per conversation, Cursor-style terminal list, history search</Description>
     <Version>1.0.0</Version>
+    <ApplicationIcon>..\assets\mcpterminal.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- wordmark shown on the startup warning; icon for the window chrome -->
+    <EmbeddedResource Include="..\assets\logo-wide.png" LogicalName="MCPTerminal.logo-wide.png" />
+    <EmbeddedResource Include="..\assets\mcpterminal.ico" LogicalName="MCPTerminal.icon.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- shared core with the standalone terminal app -->
     <Compile Include="..\app\PtyCore.cs" Link="PtyCore.cs" />
     <Compile Include="..\app\ShellSupport.cs" Link="ShellSupport.cs" />
+    <Compile Include="..\app\AccessKeys.cs" Link="AccessKeys.cs" />
   </ItemGroup>
 
   <ItemGroup>

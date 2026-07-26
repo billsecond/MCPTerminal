@@ -21,6 +21,7 @@ param(
     [string]$Command,
     [string]$Keys,
     [string]$Controller,
+    [string]$Key,
     [string]$WslDistro,
     [int]$TimeoutSec = 120,
     [int]$Tail = 80,
@@ -56,7 +57,41 @@ function Write-IndexEntry([string]$sid, $entry) {
         } catch { Start-Sleep -Milliseconds (60 * ($i + 1)) }
     }
 }
-function Resolve-Session([string]$idOrName) {
+# ---------------------------------------------------------------- access keys
+# A terminal belongs to a tab, every tab has one random access key, and each
+# session stores a copy of it. Nothing may read or drive a session without
+# presenting that key, so one conversation can never touch another's terminals.
+function Get-SessionKey([string]$sid) {
+    try {
+        $sp = Join-Path $Root "sessions\$sid\state.json"
+        if (Test-Path $sp) { return (Get-Content $sp -Raw | ConvertFrom-Json).accessKey }
+    } catch { }
+    return $null
+}
+
+function Test-KeyMatch([string]$sid, [string]$supplied) {
+    $have = Get-SessionKey $sid
+    # A session with no key at all predates this feature. Every session created
+    # now gets one, so the only keyless sessions left are stale index entries
+    # from before the upgrade - lock them rather than leaving a hole.
+    if (-not $have) { return $false }
+    return ($supplied -and $have -eq $supplied)
+}
+
+function New-AccessKey {
+    $b = [byte[]]::new(6)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($b)
+    return 'mt_' + ([System.BitConverter]::ToString($b) -replace '-', '').ToLowerInvariant()
+}
+
+function Assert-Access($s, [string]$supplied) {
+    if (Test-KeyMatch $s.Sid $supplied) { return }
+    throw ("Access denied for '$($s.Info.name)' - it belongs to another conversation. " +
+           'Ask the user for its access key (shown in the terminal window, or by running ' +
+           '`info` there) and pass it as -Key, or create your own terminal with `new`.')
+}
+
+function Resolve-Session([string]$idOrName, [string]$suppliedKey) {
     if (-not $idOrName) { throw 'Missing -Id (session code: name or guid prefix).' }
     $idx = Read-Index
     $all = @($idx.PSObject.Properties | ForEach-Object {
@@ -67,6 +102,13 @@ function Resolve-Session([string]$idOrName) {
         $hit = @($pool | Where-Object {
             $_.Sid -eq $idOrName -or $_.Sid.StartsWith($idOrName) -or $_.Info.name -eq $idOrName
         })
+        # Names like ps-1 repeat across tabs. When a key is supplied, only the
+        # sessions it unlocks are candidates - that both disambiguates and keeps
+        # other conversations' terminals invisible.
+        if ($hit.Count -gt 1 -and $suppliedKey) {
+            $mine = @($hit | Where-Object { (Get-SessionKey $_.Sid) -eq $suppliedKey })
+            if ($mine.Count -ge 1) { $hit = $mine }
+        }
         if ($hit.Count -eq 1) {
             # index.json is a cache and can go stale under concurrent writers -
             # state.json is authoritative for status/name.
@@ -119,9 +161,13 @@ switch ($Action) {
             foreach ($d in @($sessionDir, (Join-Path $sessionDir 'inbox'), (Join-Path $sessionDir 'outbox'))) {
                 New-Item -ItemType Directory -Path $d -Force | Out-Null
             }
+            # Headless sessions have no window to display a key in, so the key
+            # is printed here - it is the only time it is shown.
+            $hkey = if ($Key) { $Key } else { New-AccessKey }
             $state = [pscustomobject]@{
                 sessionId = $sid; shell = $Shell; name = $Name
                 status = 'starting'; createdAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                accessKey = $hkey; tabLabel = if ($Controller) { $Controller } else { 'Local' }
             }
             [System.IO.File]::WriteAllText((Join-Path $sessionDir 'state.json'),
                 ($state | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
@@ -137,6 +183,7 @@ switch ($Action) {
             if ($Cwd) { $spawnOpts.WorkingDirectory = $Cwd }
             Start-Process @spawnOpts | Out-Null
             Write-Output "created $sid (headless, name=$Name)"
+            Write-Output "ACCESS KEY: $hkey  <- pass this as -Key on every call for this session"
         } else {
             # NATIVE session. If MCPTerminal Studio is running, the terminal
             # opens integrated inside the app (the exe hands itself over via
@@ -168,6 +215,8 @@ switch ($Action) {
                     cwd = if ($Cwd) { $Cwd } else { '' }
                     wslDistro = if ($WslDistro) { $WslDistro } else { '' }
                     controller = if ($Controller) { $Controller } else { '' }
+                    accessKey = if ($Key) { $Key } else { '' }
+                    trusted = $false
                 }
                 $known = @(Get-ChildItem (Join-Path $Root 'sessions') -Directory -ErrorAction SilentlyContinue |
                            Select-Object -ExpandProperty Name)
@@ -187,6 +236,10 @@ switch ($Action) {
                             try {
                                 $st = Get-Content (Join-Path $d.FullName 'state.json') -Raw | ConvertFrom-Json
                                 Write-Output "created $($st.name) ($($st.sessionId.Substring(0,8))) shell=$($st.shell) in MCPTerminal Studio"
+                                if ($st.accessKey) {
+                                    Write-Output "tab: $($st.tabLabel)"
+                                    Write-Output "ACCESS KEY: $($st.accessKey)  <- pass this as -Key on every call for this tab"
+                                }
                             } catch { }
                         }
                         return
@@ -201,14 +254,21 @@ switch ($Action) {
             if ($Cwd) { $exeArgs += @('--cwd', ('"{0}"' -f $Cwd)) }
             if ($WslDistro) { $exeArgs += @('--wsl-distro', $WslDistro) }
             if ($Controller) { $exeArgs += @('--controller', ('"{0}"' -f $Controller)) }
+            if ($Key) { $exeArgs += @('--key', $Key) }
             Start-Process $AppExe -ArgumentList $exeArgs | Out-Null
-            Write-Output "window launched (shell=$Shell) - the session code appears in its header/title"
+            Write-Output "window launched (shell=$Shell) - the session code and access key appear in its header"
         }
     }
 
     'list' {
         $idx = Read-Index
-        $rows = @($idx.PSObject.Properties | ForEach-Object {
+        # Sessions the supplied key does not unlock are not listed at all - a
+        # caller must not learn that another conversation's terminals exist,
+        # let alone their names. Only the count is reported.
+        $lockedCount = 0
+        $rows = @($idx.PSObject.Properties | Where-Object {
+            if (Test-KeyMatch $_.Name $Key) { $true } else { $script:lockedCount++; $false }
+        } | ForEach-Object {
             $status = $_.Value.status
             if ($_.Value.mode -eq 'native' -and $status -eq 'running' -and $_.Value.windowPid) {
                 if (-not (Get-Process -Id $_.Value.windowPid -ErrorAction SilentlyContinue)) {
@@ -243,20 +303,32 @@ switch ($Action) {
                 Doing = $last
             }
         })
-        if ($rows.Count -eq 0) { Write-Output '(no sessions yet - mcpterm new)' }
-        else { $rows | Sort-Object Status, Name | Format-Table -AutoSize | Out-String | Write-Output }
+        if ($rows.Count -eq 0) {
+            if ($lockedCount -gt 0) {
+                Write-Output "(no terminals you can access. $lockedCount belong to other conversations - locked."
+                Write-Output ' Ask the user for a terminal''s access key, or run `new` to get your own.)'
+            } else {
+                Write-Output '(no sessions yet - mcpterm new)'
+            }
+        } else {
+            $rows | Sort-Object Status, Name | Format-Table -AutoSize | Out-String | Write-Output
+            if ($lockedCount -gt 0) {
+                Write-Output "($lockedCount more terminal(s) belong to other conversations - locked, not shown.)"
+            }
+        }
     }
 
     'connect' {
         # Connecting shouldn't DO anything - it just announces itself: types
         # `info` so the terminal shows the CONNECTED status + controlling chat.
-        & $PSCommandPath exec -Id $Id -Command 'info' -Controller $Controller -TimeoutSec $TimeoutSec
+        & $PSCommandPath exec -Id $Id -Command 'info' -Controller $Controller -Key $Key -TimeoutSec $TimeoutSec
         return
     }
 
     'exec' {
         if (-not $Command) { throw 'Missing -Command.' }
-        $s = Resolve-Session $Id
+        $s = Resolve-Session $Id $Key
+        Assert-Access $s $Key
         if ($s.Info.status -ne 'running') {
             throw "Session $($s.Sid.Substring(0,8)) [$($s.Info.name)] is '$($s.Info.status)', not running."
         }
@@ -346,7 +418,8 @@ switch ($Action) {
     }
 
     'read' {
-        $s = Resolve-Session $Id
+        $s = Resolve-Session $Id $Key
+        Assert-Access $s $Key
         $t = Join-Path $Root "sessions\$($s.Sid)\transcript.log"
         if (Test-Path $t) { Get-Content $t -Tail $Tail } else { Write-Output '(no transcript yet)' }
     }
@@ -356,7 +429,8 @@ switch ($Action) {
         #   {ENTER} {ESC} {TAB} {SPACE} {BKSP} {UP} {DOWN} {LEFT} {RIGHT}
         #   {CTRL+C} {CTRL+D} {CTRL+U}   - everything else is literal text.
         if (-not $Keys) { throw 'Missing -Keys (e.g. "Y{ENTER}" or "{DOWN}{DOWN}{ENTER}").' }
-        $s = Resolve-Session $Id
+        $s = Resolve-Session $Id $Key
+        Assert-Access $s $Key
         if ($s.Info.status -ne 'running') { throw "Session [$($s.Info.name)] is not running." }
         $map = @{
             '{ENTER}' = "`r"; '{ESC}' = [char]27; '{TAB}' = "`t"; '{SPACE}' = ' '
@@ -382,7 +456,8 @@ switch ($Action) {
 
     'rename' {
         if (-not $Name) { throw 'Missing -Name (the new, purpose-describing name).' }
-        $s = Resolve-Session $Id
+        $s = Resolve-Session $Id $Key
+        Assert-Access $s $Key
         $sessionDir = Join-Path $Root "sessions\$($s.Sid)"
         try {
             $spath = Join-Path $sessionDir 'state.json'
@@ -397,7 +472,8 @@ switch ($Action) {
     }
 
     'kill' {
-        $s = Resolve-Session $Id
+        $s = Resolve-Session $Id $Key
+        Assert-Access $s $Key
         if ($s.Info.mode -eq 'native') {
             if ($s.Info.windowPid) { Stop-Process -Id $s.Info.windowPid -Force -ErrorAction SilentlyContinue }
         } else {
@@ -423,14 +499,20 @@ switch ($Action) {
 MCPTerminal - shared live terminals for you + an AI assistant
 
   mcpterm new    [-Shell pwsh|powershell|cmd|bash|bash-wsl] [-Name x]
-                 [-Cwd dir] [-WslDistro d] [-Hidden]
-  mcpterm list
-  mcpterm connect -Id <code> [-Controller "<chat>"]     (announce + show status)
-  mcpterm exec   -Id <code> -Command "<cmd>" [-Controller "<chat>"] [-TimeoutSec n]
-  mcpterm keys   -Id <code> -Keys "Y{ENTER}"      (raw keys: prompts, TUI apps)
-  mcpterm read   -Id <code> [-Tail n]
-  mcpterm rename -Id <code> -Name "<purpose>"     (name by what it's doing)
-  mcpterm kill   -Id <code>
+                 [-Cwd dir] [-WslDistro d] [-Key <key>] [-Hidden]
+  mcpterm list   [-Key <key>]
+  mcpterm connect -Id <code> -Key <key> [-Controller "<chat>"]   (announce + status)
+  mcpterm exec   -Id <code> -Key <key> -Command "<cmd>" [-Controller "<chat>"] [-TimeoutSec n]
+  mcpterm keys   -Id <code> -Key <key> -Keys "Y{ENTER}"   (raw keys: prompts, TUI apps)
+  mcpterm read   -Id <code> -Key <key> [-Tail n]
+  mcpterm rename -Id <code> -Key <key> -Name "<purpose>"  (name by what it's doing)
+  mcpterm kill   -Id <code> -Key <key>
+
+ACCESS KEYS: each terminal belongs to a tab, and every tab has one access key.
+Reading or driving a terminal requires its key (-Key); `new` without a key mints
+a fresh tab and prints the key it created. The key is shown in the terminal
+window's own header and by running `info` inside it, so the person at the
+keyboard decides who gets in. Terminals you hold no key for are not listed.
 
 Sessions + logs + index: %LOCALAPPDATA%\MCPTerminal
 '@ | Write-Output

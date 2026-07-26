@@ -254,7 +254,7 @@ public static class TerminalSetup
 public static class StudioBridge
 {
     public static bool TryRedirect(string root, string shell, string name, string cwd, string wslDistro,
-        string controller = null)
+        string controller = null, string accessKey = null, bool trusted = false)
     {
         try
         {
@@ -267,6 +267,9 @@ public static class StudioBridge
             {
                 ["shell"] = shell, ["name"] = name ?? "", ["cwd"] = cwd ?? "",
                 ["wslDistro"] = wslDistro ?? "", ["controller"] = controller ?? "",
+                // key presented by the caller (empty = gets its own new tab) and
+                // whether this launch came from the user rather than a client
+                ["accessKey"] = accessKey ?? "", ["trusted"] = trusted,
             };
             string reqDir = Path.Combine(root, "requests");
             Directory.CreateDirectory(reqDir);

@@ -46,6 +46,7 @@ internal static class Program
     // ------------------------------------------------------------------ state
     static readonly object OutLock = new();
     static string Root, SessionId, Name, Shell, WslDistro, Controller, SessionDir, InboxDir, OutboxDir;
+    static string AccessKey = "", TabLabel = AccessKeys.LocalTab;
     static string ScreenLog, TranscriptLog, AssistantLog, StateFile, IndexFile;
     static string ShortId => SessionId[..8];
 
@@ -71,6 +72,7 @@ internal static class Program
                 case "--shell": shell = args[i + 1]; break;
                 case "--wsl-distro": WslDistro = args[i + 1]; break;
                 case "--controller": Controller = args[i + 1]; break;
+                case "--key": AccessKey = args[i + 1]; break;
             }
         }
         Root ??= IsWin
@@ -80,11 +82,21 @@ internal static class Program
         Shell = (shell ?? "").ToLowerInvariant();
         if (Shell == "") Shell = IsWin ? "pwsh" : (File.Exists("/bin/bash") || File.Exists("/usr/bin/bash") ? "bash" : "sh");
 
+        // A launch with no --controller came from the person at the keyboard (a
+        // shortcut or Windows Terminal profile), so it may join the Local tab
+        // without a key. A launch naming a controller came from a client and
+        // must present that tab's key or it gets a tab of its own.
+        bool trusted = string.IsNullOrWhiteSpace(Controller);
+
         // If MCPTerminal Studio is running, integrate: hand this launch to the
         // app so the terminal opens inside it (unless --standalone is given).
         if (IsWin && !args.Contains("--standalone") &&
-            StudioBridge.TryRedirect(Root, Shell, name, cwd, WslDistro, Controller))
+            StudioBridge.TryRedirect(Root, Shell, name, cwd, WslDistro, Controller, AccessKey, trusted))
             return 0;
+
+        Directory.CreateDirectory(Root);
+        (TabLabel, AccessKey) = AccessKeys.ClaimTab(Root, Controller, AccessKey, trusted);
+        if (TabLabel != AccessKeys.LocalTab) Controller = TabLabel;
 
         SessionId = Guid.NewGuid().ToString();
         Name = ShellSupport.SanitizeName(name, ShellSupport.AutoName(Root, Shell));
@@ -167,6 +179,8 @@ internal static class Program
             ["sessionId"] = SessionId, ["name"] = Name, ["shell"] = Shell,
             ["mode"] = "native", ["status"] = "running",
             ["windowPid"] = Environment.ProcessId, ["createdAt"] = now,
+            // the key any caller must present to read or drive this session
+            ["accessKey"] = AccessKey ?? "", ["tabLabel"] = TabLabel,
         };
         // Owning conversation, stamped at creation so a session is grouped
         // (and claimable) from its very first moment.
@@ -233,7 +247,7 @@ internal static class Program
     static string BuildShellCommand() => ShellSupport.BuildShellCommand(Shell, InitPath, WslDistro, IsWin);
     static void WriteShellInit()
     {
-        ShellSupport.WriteInitScript(Shell, InitPath, Name, SessionId, SessionDir, StateFile);
+        ShellSupport.WriteInitScript(Shell, InitPath, Name, SessionId, SessionDir, StateFile, AccessKey);
         if (Shell == "bash-wsl") ShellSupport.PushInitToWsl(InitPath, WslDistro);
     }
     // ------------------------------------------------------------------ pumps

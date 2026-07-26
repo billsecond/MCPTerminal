@@ -5,12 +5,40 @@
 // =============================================================================
 using System;
 using System.Drawing;
+using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace MCPTerminal.Studio;
 
 public sealed class DisclaimerForm : Form
 {
+    // Both logos ship as embedded resources so the dialog never depends on
+    // files sitting next to the exe.
+    public static Image LoadLogo(string logicalName)
+    {
+        try
+        {
+            using var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(logicalName);
+            if (s == null) return null;
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            ms.Position = 0;
+            return Image.FromStream(ms);
+        }
+        catch { return null; }
+    }
+
+    public static Icon LoadAppIcon()
+    {
+        try
+        {
+            using var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("MCPTerminal.icon.ico");
+            return s == null ? null : new Icon(s);
+        }
+        catch { return null; }
+    }
+
     public DisclaimerForm()
     {
         Text = "MCPTerminal - Security Warning";
@@ -18,10 +46,34 @@ public sealed class DisclaimerForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(560, 400);
+        ClientSize = new Size(560, 470);
         BackColor = Color.FromArgb(24, 24, 27);
         ForeColor = Color.White;
         TopMost = true;
+        ShowInTaskbar = true;
+        var ic = LoadAppIcon();
+        if (ic != null) Icon = ic;
+
+        // The wordmark is dark navy on transparent, so it sits on a light band
+        // rather than vanishing into the dark dialog.
+        var brand = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 78,
+            BackColor = Color.FromArgb(244, 245, 247),
+        };
+        var logo = LoadLogo("MCPTerminal.logo-wide.png");
+        if (logo != null)
+        {
+            brand.Controls.Add(new PictureBox
+            {
+                Image = logo,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Dock = DockStyle.Fill,
+                Padding = new Padding(14, 10, 14, 10),
+                BackColor = Color.Transparent,
+            });
+        }
 
         var title = new Label
         {
@@ -98,11 +150,32 @@ public sealed class DisclaimerForm : Form
         Controls.Add(body);
         Controls.Add(buttons);
         Controls.Add(title);
+        Controls.Add(brand);
 
         // Exit is the safe default for Enter and Esc alike.
         AcceptButton = exit;
         CancelButton = exit;
     }
+
+    // A warning nobody sees is not a warning. TopMost alone is not enough when
+    // another app owns the foreground at launch, so claim it explicitly and
+    // flash the taskbar button in case the user is on another monitor.
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        try
+        {
+            BringToFront();
+            Activate();
+            Focus();
+            FlashWindow(Handle, true);
+            System.Media.SystemSounds.Exclamation.Play();
+        }
+        catch { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool FlashWindow(IntPtr hwnd, bool invert);
 
     // True only when the user explicitly accepted.
     public static bool ShowAndConfirm()

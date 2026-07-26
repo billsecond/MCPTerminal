@@ -24,6 +24,9 @@ public sealed class StudioSession
     public string Shell { get; private set; }
     public string SessionDir { get; private set; }
     public DateTime LastOutputUtc { get; private set; } = DateTime.MinValue;
+    // Tab this terminal belongs to, and the key that grants access to it.
+    public string TabLabel { get; private set; } = AccessKeys.LocalTab;
+    public string AccessKey { get; private set; } = "";
 
     string _stateFile, _indexFile, _inboxDir, _outboxDir;
     string _screenLog, _transcriptLog, _assistantLog;
@@ -38,8 +41,12 @@ public sealed class StudioSession
         "gale", "harbor", "iris", "juniper", "koa", "lunar", "mesa", "nova", "onyx", "pine",
         "quartz", "ridge", "slate", "topaz", "umber", "vale", "willow", "zephyr" };
 
+    // trusted: the user created this from Studio's own UI, so it may join the
+    // named tab without presenting that tab's key. Requests arriving from the
+    // CLI / an MCP client are untrusted and must supply accessKey, otherwise
+    // they get a fresh tab of their own.
     public static StudioSession Create(string root, string shell, string name, string cwd, string wslDistro,
-        string controller = null)
+        string controller = null, string accessKey = null, bool trusted = true)
     {
         var s = new StudioSession
         {
@@ -62,10 +69,14 @@ public sealed class StudioSession
         s._stateFile = Path.Combine(s.SessionDir, "state.json");
         s._indexFile = Path.Combine(root, "index.json");
 
+        var (tabLabel, tabKey) = AccessKeys.ClaimTab(root, controller, accessKey, trusted);
+        s.TabLabel = tabLabel;
+        s.AccessKey = tabKey;
+
         string initPath = Path.Combine(s.SessionDir, ShellSupport.InitFileName(s.Shell));
-        ShellSupport.WriteInitScript(s.Shell, initPath, s.Name, s.Id, s.SessionDir, s._stateFile);
+        ShellSupport.WriteInitScript(s.Shell, initPath, s.Name, s.Id, s.SessionDir, s._stateFile, tabKey);
         if (s.Shell == "bash-wsl") ShellSupport.PushInitToWsl(initPath, wslDistro);
-        s.Register(controller);
+        s.Register(tabLabel == AccessKeys.LocalTab ? null : tabLabel, tabKey);
 
         string cmdline = ShellSupport.BuildShellCommand(s.Shell, initPath, wslDistro, isWindows: true);
         s._pty = WindowsPty.Spawn(cmdline, cwd, 120, 30);
@@ -78,7 +89,7 @@ public sealed class StudioSession
     }
 
     // ------------------------------------------------------------- lifecycle
-    void Register(string controller = null)
+    void Register(string controller = null, string accessKey = null)
     {
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         var state = new JsonObject
@@ -86,6 +97,8 @@ public sealed class StudioSession
             ["sessionId"] = Id, ["name"] = Name, ["shell"] = Shell,
             ["mode"] = "native", ["host"] = "studio", ["status"] = "running",
             ["windowPid"] = Environment.ProcessId, ["createdAt"] = now,
+            // the key any caller must present to read or drive this session
+            ["accessKey"] = accessKey ?? "", ["tabLabel"] = TabLabel,
         };
         // owning conversation, stamped at creation so the tab exists immediately
         if (!string.IsNullOrWhiteSpace(controller)) state["controller"] = controller;

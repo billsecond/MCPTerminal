@@ -147,9 +147,13 @@ public static class ShellSupport
     }
 
     public static void WriteInitScript(string shell, string initPath, string name, string sessionId,
-        string sessionDir, string stateFile)
+        string sessionDir, string stateFile, string accessKey = "")
     {
         string shortId = sessionId[..8];
+        // The key is shown here on purpose: this window belongs to the person at
+        // the keyboard, and handing the key to an assistant is how they grant it
+        // access. Nothing can drive this terminal without it.
+        accessKey = SanitizeName(accessKey, "");
         bool isPs = shell is "pwsh" or "powershell";
         if (isPs)
         {
@@ -161,12 +165,17 @@ Write-Host 'MCPTerminal ' -ForegroundColor Cyan -NoNewline
 Write-Host 'shared terminal - session code ' -NoNewline
 Write-Host '{name}' -ForegroundColor Cyan -NoNewline
 Write-Host ' ({shortId})'
-Write-Host 'Paste the code into your assistant to let it type here. ''info'' = details; * in prompt = connected.' -ForegroundColor DarkGray
+Write-Host 'access key ' -ForegroundColor DarkGray -NoNewline
+Write-Host '{accessKey}' -ForegroundColor Yellow -NoNewline
+Write-Host ' - give the code AND key to an assistant to let it type here.' -ForegroundColor DarkGray
+Write-Host '''info'' = details; * in prompt = connected.' -ForegroundColor DarkGray
 Write-Host ''
 function global:info {{
     Write-Host ''
     Write-Host '  MCPTerminal session code: ' -NoNewline
     Write-Host '{name}' -ForegroundColor Cyan
+    Write-Host '  access key: ' -NoNewline
+    Write-Host '{accessKey}' -ForegroundColor Yellow
     Write-Host '  guid   : {sessionId}'
     Write-Host '  shell  : {shell}'
     Write-Host '  logs   : {sessionDir}'
@@ -209,9 +218,11 @@ function global:prompt {{
             File.WriteAllText(initPath,
                 "@echo off\r\n" +
                 $"echo {e}[1;96mMCPTerminal{e}[0m shared terminal - session code {e}[1;96m{name}{e}[0m ({shortId})\r\n" +
-                $"echo {e}[90mPaste the code into your assistant to let it type here. 'info' = details.{e}[0m\r\n" +
+                $"echo {e}[90maccess key {e}[93m{accessKey}{e}[90m - give the code AND key to an assistant.{e}[0m\r\n" +
+                $"echo {e}[90m'info' = details.{e}[0m\r\n" +
                 "echo.\r\n" +
-                $"doskey info=echo. $T echo   MCPTerminal session code: {name} $T echo   guid: {sessionId} $T " +
+                $"doskey info=echo. $T echo   MCPTerminal session code: {name} $T " +
+                $"echo   access key: {accessKey} $T echo   guid: {sessionId} $T " +
                 $"echo   shell: cmd $T echo   logs: {sessionDir} $T echo   status: see window title $T " +
                 $"echo   {Credits} $T echo.\r\n" +
                 "prompt $P$G\r\n");
@@ -223,9 +234,11 @@ function global:prompt {{
             File.WriteAllText(initPath, $@"
 [ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null
 printf '\033[1;96mMCPTerminal\033[0m shared terminal - session code \033[1;96m{name}\033[0m ({shortId})\n'
-printf ""\033[90mPaste the code into your assistant to let it type here. 'info' = details; * in prompt = connected.\033[0m\n\n""
+printf ""\033[90maccess key \033[93m{accessKey}\033[90m - give the code AND key to an assistant to let it type here.\033[0m\n""
+printf ""\033[90m'info' = details; * in prompt = connected.\033[0m\n\n""
 info() {{
     printf '\n  MCPTerminal session code: \033[1;96m{name}\033[0m\n'
+    printf '  access key: \033[93m{accessKey}\033[0m\n'
     printf '  guid   : {sessionId}\n'
     printf '  shell  : {shell}\n'
     printf '  logs   : {dirForShell}\n'
