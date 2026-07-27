@@ -208,7 +208,9 @@ function global:info {{
         Write-Host ($(if ($j.tabLabel) {{ $j.tabLabel }} else {{ '(none)' }})) -ForegroundColor Cyan
     }} else {{
         Write-Host '  access : ' -NoNewline
-        Write-Host 'LOCAL - unclaimed; no key exists yet' -ForegroundColor Green
+        Write-Host 'LOCAL - unclaimed. No key exists: an assistant claims' -ForegroundColor Green
+        Write-Host '           this terminal by naming its chat, which moves it into' -ForegroundColor Green
+        Write-Host '           that chat tab. Do not go looking for a key.' -ForegroundColor Green
     }}
     Write-Host '  guid   : {sessionId}'
     Write-Host '  shell  : {shell}'
@@ -281,7 +283,9 @@ info() {{
     if [ -n ""$_key"" ]; then
         printf '  access key: \033[93m%s\033[0m\n' ""$_key""
     else
-        printf '  access : \033[32mLOCAL - unclaimed; no key exists yet\033[0m\n'
+        printf '  access : \033[32mLOCAL - unclaimed. No key exists: an assistant claims\033[0m\n'
+        printf '           \033[32mthis terminal by naming its chat, which moves it into\033[0m\n'
+        printf '           \033[32mthat chat tab. Do not go looking for a key.\033[0m\n'
     fi
     printf '  guid   : {sessionId}\n'
     printf '  shell  : {shell}\n'
