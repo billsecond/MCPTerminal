@@ -116,7 +116,13 @@ public sealed class StudioForm : Form
         _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
             "mcpterminal.studio", AppContext.BaseDirectory,
             CoreWebView2HostResourceAccessKind.Allow);
-        _web.CoreWebView2.Navigate("https://mcpterminal.studio/ui.html");
+        // Cache-bust on the UI's own timestamp. The virtual host serves ui.html
+        // over a real https origin, so WebView2 caches it in the persistent
+        // user-data folder - after an update that silently keeps showing the OLD
+        // interface even though the new file is on disk.
+        string uiPath = Path.Combine(AppContext.BaseDirectory, "ui.html");
+        long stamp = File.Exists(uiPath) ? File.GetLastWriteTimeUtc(uiPath).Ticks : 0;
+        _web.CoreWebView2.Navigate($"https://mcpterminal.studio/ui.html?v={stamp}");
 
         _requestTimer.Tick += (_, _) => DrainRequests();
         _statusTimer.Tick += (_, _) =>

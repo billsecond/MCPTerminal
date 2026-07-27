@@ -217,6 +217,24 @@ Ensure-Pwsh7
 $source = Join-Path $PSScriptRoot '..\releases\win-x64\MCPTerminal.exe'
 if (-not (Test-Path $source)) { throw "Release binary not found: $source (build it first, or use setup\get.ps1)" }
 
+# A running MCPTerminal/Studio holds its own binary open, so copying over it
+# fails - and on an UPDATE that leaves you running the old build while the
+# install looks like it worked. Close them first.
+$busy = Get-Process MCPTerminal, MCPTerminalStudio -ErrorAction SilentlyContinue
+if ($busy) {
+    Write-Host ''
+    Write-Host "  MCPTerminal is running ($(($busy | ForEach-Object ProcessName | Sort-Object -Unique) -join ', '))." -ForegroundColor Yellow
+    Write-Host '  It must be closed to replace its files, or you will keep running the old build.' -ForegroundColor DarkGray
+    if (Ask 'Close it now and continue?' 'Its terminals end; their logs are kept.') {
+        $busy | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 900
+        Remove-Item (Join-Path $env:LOCALAPPDATA 'MCPTerminal\studio.lock') -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host '  Aborted - close MCPTerminal and run this again.' -ForegroundColor Yellow
+        exit 1
+    }
+}
+
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 Copy-Item $source $exePath -Force
 Copy-Item (Join-Path $PSScriptRoot '..\mcpterm.ps1') (Join-Path $installDir 'mcpterm.ps1') -Force
