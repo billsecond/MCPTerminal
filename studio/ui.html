@@ -131,7 +131,15 @@
 
   /* ---- terminal panes ---- */
   #paneWrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .phName { font-weight: 600; }
+  /* tabs inside a pane: one per terminal in the group */
+  .ptabs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: none; }
+  .ptab { font-weight: 600; color: var(--dim); white-space: nowrap; cursor: pointer;
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  .ptabs.multi .ptab { padding: 2px 9px; border-radius: 5px; border: 1px solid transparent; }
+  .ptabs.multi .ptab:hover { color: var(--fg); }
+  .ptabs.multi .ptab.on { background: var(--bg2); border-color: var(--line); }
+  .ptab.closed { font-style: italic; color: #f87171; }
+  .ptab.unseen::after { content: ' •'; color: var(--accent); }
   .phdim { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
   .phchip { font-size: 10px; color: var(--dim); background: var(--bg);
     border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; flex: none; }
@@ -159,9 +167,8 @@
      too loud. The unfocused header sits back (darker, dimmer name); the focused
      one lifts slightly and its name returns to full strength. */
   .pstrip { background: var(--bg); }
-  .pstrip .phName { color: var(--dim); font-weight: 600; }
   .pane.focused .pstrip { background: var(--bg3); }
-  .pane.focused .pstrip .phName { color: var(--fg); }
+  .pane.focused .pstrip .ptab.on { color: var(--fg); }
   .pstrip:active { cursor: grabbing; }
   .pstrip .x { color: var(--dim); flex: none; padding: 0 4px; cursor: pointer; }
   .pstrip .x:hover { color: #f87171; }
@@ -490,7 +497,7 @@ async function closeConv(c) {
 
 function renderList() {
   $list.innerHTML = '';
-  const onScreen = new Set(leafIds(rootOf(activeConv)));   // terminals in a pane right now
+  const onScreen = visibleIds();   // terminals on screen right now
   const visible = [...terms.values()].filter(t => convOf(t) === activeConv);
   if (activeTerm && !visible.some(t => t.id === activeTerm)) activeTerm = visible[0]?.id ?? null;
   if (!activeTerm && visible.length) activeTerm = visible[0].id;
@@ -529,13 +536,48 @@ function renderList() {
   }
 }
 
+// One tab per terminal in the group, in the header of the member on screen.
+// A single-terminal group shows just its name, so nothing changes visually until
+// you actually put two terminals together.
+function renderGroupTabs(leaf, host) {
+  const box = host.strip?.querySelector('.ptabs');
+  if (!box) return;
+  box.innerHTML = '';
+  box.classList.toggle('multi', leaf.ids.length > 1);
+  leaf.ids.forEach((id, i) => {
+    const t = terms.get(id);
+    if (!t) return;
+    const el = document.createElement('span');
+    el.className = 'ptab' + (i === leaf.ai ? ' on' : '') + (t.closed ? ' closed' : '');
+    el.textContent = t.name;
+    el.title = t.name + ' - click to show, drag to move it elsewhere';
+    el.draggable = true;
+    el.addEventListener('dragstart', ev => { ev.stopPropagation(); beginTermDrag(ev, id); });
+    el.addEventListener('mousedown', ev => {
+      ev.stopPropagation();
+      if (leaf.ai !== i) { leaf.ai = i; activeTerm = id; renderAll(); terms.get(id)?.term.focus(); }
+      else setFocusPane(id);
+    });
+    if (t.unseen) el.classList.add('unseen');
+    box.appendChild(el);
+  });
+}
+
+// Redraw the tabs of whichever group holds this terminal (its own tab may be
+// the hidden one, so the strip we update belongs to the member on screen).
+function refreshGroupTabsFor(id) {
+  const leaf = findLeaf(rootOf(activeConv), id);
+  if (!leaf) return;
+  const host = terms.get(shownId(leaf));
+  if (host) renderGroupTabs(leaf, host);
+}
+
 // Fill one pane's header. Every pane carries the same set of fields, so a split
 // never leaves you guessing which terminal a pane is - or what its key, owning
 // chat or connection state is.
 function updatePaneHeader(t) {
   if (!t?.strip) return;
   const q = c => t.strip.querySelector('.' + c);
-  q('phName').textContent = t.name;
   q('phId').textContent = t.shortId ?? '';
   q('phShell').textContent = t.shell;
   const pk = q('phKey');
@@ -572,11 +614,15 @@ function updatePaneHead() { for (const t of terms.values()) updatePaneHeader(t);
 
 // ============================================================== the pane grid
 // Each conversation tab owns a layout tree, the same shape VS Code's grid uses:
-//   leaf  = { t:'leaf', id:<terminal id> }        one terminal, one rectangle
+//   leaf  = { t:'leaf', ids:[terminal ids], ai:<active index> }   a GROUP
 //   split = { t:'split', dir:'row'|'col', kids:[], sz:[fractions] }
-// 'row' lays its children out left-to-right, 'col' top-to-bottom. Terminals not
-// in the tree are simply not on screen - clicking one in the sidebar shows it in
-// the focused pane, exactly like clicking a file targets the active editor group.
+// 'row' lays its children out left-to-right, 'col' top-to-bottom.
+//
+// A leaf is a group of terminals sharing one rectangle, showing one at a time
+// with a tab per member - the same as a VS Code editor group. This is what stops
+// a third terminal from evicting one of two you have arranged: it opens as
+// another TAB in the focused group, and you switch between them by clicking.
+// Drag a tab to an edge to split it out into a group of its own.
 const layouts = new Map();          // conversation label -> root node
 const GAP = 6, EDGE = 8;            // px between panes, and around the whole area
 let paneRects = [];                 // last computed geometry, used for hit-testing
@@ -589,12 +635,17 @@ function eachLeaf(node, fn) {
   if (node.t === 'leaf') { fn(node); return; }
   for (const k of node.kids) eachLeaf(k, fn);
 }
-function leafIds(node) { const out = []; eachLeaf(node, l => out.push(l.id)); return out; }
+// every terminal in the tree, across all groups
+function leafIds(node) { const out = []; eachLeaf(node, l => out.push(...l.ids)); return out; }
+// the group holding this terminal
 function findLeaf(node, id) {
   let hit = null;
-  eachLeaf(node, l => { if (l.id === id) hit = l; });
+  eachLeaf(node, l => { if (l.ids.includes(id)) hit = l; });
   return hit;
 }
+// the terminal a group is currently showing
+function shownId(leaf) { return leaf.ids[Math.min(leaf.ai ?? 0, leaf.ids.length - 1)]; }
+function newLeaf(id) { return { t: 'leaf', ids: [id], ai: 0 }; }
 // Is this exact node still part of the tree? (Identity, not id - a drop looks
 // its target up before removing the dragged pane, and the removal can collapse
 // the tree around it.)
@@ -610,11 +661,18 @@ function findParent(node, child) {
   return null;
 }
 
-// Drop a terminal out of the tree, collapsing any split left with one child.
+// Drop a terminal out of the tree. Its group survives while it still has other
+// tabs; an emptied group is removed, collapsing any split left with one child.
 function layoutRemove(conv, id) {
   const root = rootOf(conv);
   const leaf = findLeaf(root, id);
   if (!leaf) return;
+  const at = leaf.ids.indexOf(id);
+  leaf.ids.splice(at, 1);
+  if (leaf.ids.length) {                   // group lives on - keep a sane tab active
+    if (leaf.ai > at || leaf.ai >= leaf.ids.length) leaf.ai = Math.max(0, leaf.ai - 1);
+    return;
+  }
   if (leaf === root) { setRoot(conv, null); return; }
   const p = findParent(root, leaf);
   const i = p.kids.indexOf(leaf);
@@ -636,13 +694,14 @@ function layoutRemove(conv, id) {
 function layoutInsert(conv, target, side, id) {
   layoutRemove(conv, id);                 // a terminal appears in the grid once
   const root = rootOf(conv);
-  if (!root) { setRoot(conv, { t: 'leaf', id }); return; }
+  if (!root) { setRoot(conv, newLeaf(id)); return; }
   // dropped past the edge of every pane: dock against the first one we have
   if (!hasNode(root, target)) { target = null; eachLeaf(root, l => { target ??= l; }); }
-  if (side === 'center') { target.id = id; return; }
+  // dropped in the middle of a group: join it as another tab, nothing is evicted
+  if (side === 'center') { target.ids.push(id); target.ai = target.ids.length - 1; return; }
   const dir = (side === 'left' || side === 'right') ? 'row' : 'col';
   const before = (side === 'left' || side === 'top');
-  const leaf = { t: 'leaf', id };
+  const leaf = newLeaf(id);
   const p = findParent(root, target);
   if (p && p.dir === dir) {
     const i = p.kids.indexOf(target);
@@ -655,8 +714,8 @@ function layoutInsert(conv, target, side, id) {
   // Convert the target leaf into a split IN PLACE. Rewriting the node instead of
   // replacing it in its parent keeps every existing reference to it valid and
   // means the root case needs no special handling.
-  const moved = { t: 'leaf', id: target.id };
-  delete target.id;
+  const moved = { t: 'leaf', ids: target.ids, ai: target.ai };
+  delete target.ids; delete target.ai;
   target.t = 'split'; target.dir = dir;
   target.kids = before ? [leaf, moved] : [moved, leaf];
   target.sz = [.5, .5];
@@ -665,7 +724,7 @@ function layoutInsert(conv, target, side, id) {
 // Tree -> pixel rectangles. Sizes are fractions, so the grid reflows on resize.
 function computeRects(node, x, y, w, h, panes, sashes) {
   if (!node) return;
-  if (node.t === 'leaf') { panes.push({ id: node.id, x, y, w, h }); return; }
+  if (node.t === 'leaf') { panes.push({ id: shownId(node), leaf: node, x, y, w, h }); return; }
   const n = node.kids.length;
   const horiz = node.dir === 'row';
   const avail = (horiz ? w : h) - GAP * (n - 1);
@@ -698,7 +757,7 @@ function ensureLayout() {
   }
   if (!rootOf(activeConv) && mine.length) {
     const seed = mine.find(t => t.id === activeTerm) ?? mine[0];
-    setRoot(activeConv, { t: 'leaf', id: seed.id });
+    setRoot(activeConv, newLeaf(seed.id));
   }
   const shown = leafIds(rootOf(activeConv));
   if (shown.length && !shown.includes(activeTerm)) activeTerm = shown[0];
@@ -718,9 +777,13 @@ function setFocusPane(id, focusTerm = true) {
   if (focusTerm && !historyMode) terms.get(id).term.focus();
 }
 
+// Terminals actually visible right now: a group shows one of its tabs, so this
+// is not the same as "every terminal in the grid".
+function visibleIds() { return new Set(paneRects.map(r => r.id)); }
+
 // Repaint the sidebar's active/on-screen classes in place.
 function markRows() {
-  const onScreen = new Set(leafIds(rootOf(activeConv)));
+  const onScreen = visibleIds();
   for (const t of terms.values()) {
     if (!t.row) continue;
     t.row.classList.toggle('active', t.id === activeTerm);
@@ -728,13 +791,16 @@ function markRows() {
   }
 }
 
-// Show a terminal in the focused pane (sidebar click), or focus the pane that
-// already has it.
+// Open a terminal (sidebar click, or a newly created one). If it is already
+// somewhere in the grid, just switch to it. Otherwise it joins the focused group
+// as another TAB - it never evicts a terminal you have arranged on screen.
 function showInFocusedPane(id) {
   const root = rootOf(activeConv);
-  if (findLeaf(root, id)) { activeTerm = id; return; }
+  const have = findLeaf(root, id);
+  if (have) { have.ai = have.ids.indexOf(id); activeTerm = id; return; }
   const cur = findLeaf(root, activeTerm);
-  if (cur) cur.id = id; else setRoot(activeConv, { t: 'leaf', id });
+  if (cur) { cur.ids.push(id); cur.ai = cur.ids.length - 1; }
+  else setRoot(activeConv, newLeaf(id));
   activeTerm = id;
 }
 
@@ -758,6 +824,8 @@ function applyLayout(quick = false) {
   paneRects = panes;
   $panes.classList.toggle('split', panes.length > 1);
 
+  // Only each group's active member is on screen; its siblings stay alive off
+  // screen and are reachable through the group's tabs.
   const shown = new Set(panes.map(p => p.id));
   for (const t of terms.values()) {
     const on = !historyMode && shown.has(t.id);
@@ -767,6 +835,8 @@ function applyLayout(quick = false) {
     const r = panes.find(p => p.id === t.id);
     t.el.style.left = r.x + 'px'; t.el.style.top = r.y + 'px';
     t.el.style.width = r.w + 'px'; t.el.style.height = r.h + 'px';
+    renderGroupTabs(r.leaf, t);
+    updatePaneHeader(t);
   }
 
   // Reuse the sash elements. Recreating them every layout would destroy the one
@@ -924,8 +994,10 @@ $drop.addEventListener('drop', ev => {
   if (!targetId && root) return;
   // Take it out of its old slot first, then re-home it. The target leaf is
   // looked up again afterwards because removal can collapse the tree around it.
+  // Hold the target GROUP itself, not an id: removing the dragged terminal can
+  // change which tab that group is showing.
+  const target = h ? h.rect.leaf : null;
   if (findLeaf(root, id)) layoutRemove(activeConv, id);
-  const target = targetId ? findLeaf(rootOf(activeConv), targetId) : null;
   layoutInsert(activeConv, target, target ? h.side : 'center', id);
   activeTerm = id;
   renderAll();
@@ -954,7 +1026,7 @@ function addTerm(m) {
   strip.draggable = true;
   strip.title = 'Drag to dock this terminal left / right / above / below another';
   strip.innerHTML =
-    `<span class="phName"></span><span class="phId phdim"></span>` +
+    `<span class="ptabs"></span><span class="phId phdim"></span>` +
     `<span class="phShell phchip"></span><span class="phKey phchip"></span>` +
     `<span class="phspacer"></span><span class="phChat phdim"></span>` +
     `<span class="phStatus"></span><span class="x">&#10005;</span>`;
@@ -1043,6 +1115,8 @@ bridge?.addEventListener('message', ev => {
           if (!t.unseen) {
             t.unseen = true;
             t.row?.querySelector('.unread')?.classList.add('has');
+            // a terminal hidden behind another tab in its group gets a dot there
+            refreshGroupTabsFor(m.id);
           }
         }
       }
