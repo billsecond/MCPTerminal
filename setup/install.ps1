@@ -66,6 +66,63 @@ function Register-JsonClient([string]$clientName, [string]$configPath, [switch]$
     }
 }
 
+# PowerShell 7 is the DEFAULT shell for new terminals and the interpreter the
+# `mcpterm` CLI runs under, so a machine without it gets a broken default. Not
+# fatal - cmd / PS5 / Git Bash / WSL all still work - so this offers to install
+# it rather than refusing to continue.
+function Ensure-Pwsh7 {
+    $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwshCmd) {
+        $ver = try { & pwsh -NoProfile -NoLogo -Command '$PSVersionTable.PSVersion.ToString()' 2>$null } catch { $null }
+        if ($ver -and [version]($ver -split '-')[0] -ge [version]'7.0') {
+            Write-Host "  PowerShell $ver found." -ForegroundColor Green
+            return
+        }
+        Write-Host "  Found pwsh but could not confirm it is 7+ (reported '$ver')." -ForegroundColor Yellow
+    }
+
+    Write-Host ''
+    Write-Host '  PowerShell 7 (pwsh) is NOT installed.' -ForegroundColor Yellow
+    Write-Host '  It is the default shell for new terminals and the interpreter the' -ForegroundColor DarkGray
+    Write-Host '  mcpterm CLI runs under. Without it, terminals opened as "pwsh" will' -ForegroundColor DarkGray
+    Write-Host '  fail - cmd, Windows PowerShell, Git Bash and WSL still work.' -ForegroundColor DarkGray
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Write-Host ''
+        Write-Host '  winget is not available on this machine. Install PowerShell 7 manually:' -ForegroundColor Yellow
+        Write-Host '    https://aka.ms/powershell-release' -ForegroundColor DarkGray
+        return
+    }
+
+    if (-not (Ask 'Install PowerShell 7 now?' 'Runs: winget install --id Microsoft.PowerShell --exact')) {
+        Write-Host '  Skipped. Install it later with:' -ForegroundColor DarkGray
+        Write-Host '    winget install --id Microsoft.PowerShell --exact' -ForegroundColor DarkGray
+        return
+    }
+
+    Write-Host '  Installing PowerShell 7 (winget may prompt for agreements)...'
+    # --exact so the id cannot resolve to Preview or a different package.
+    winget install --id Microsoft.PowerShell --exact --source winget `
+        --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  winget exited with $LASTEXITCODE - PowerShell 7 was not installed." -ForegroundColor Yellow
+        Write-Host '    Install it manually: https://aka.ms/powershell-release' -ForegroundColor DarkGray
+        return
+    }
+    # winget put pwsh.exe on PATH for NEW processes; this one inherited the old
+    # PATH, so look for it where winget installs it before giving up.
+    if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+        $guess = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
+        if (Test-Path $guess) { $env:Path = "$(Split-Path $guess);$env:Path" }
+    }
+    if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+        Write-Host '  PowerShell 7 installed.' -ForegroundColor Green
+    } else {
+        Write-Host '  PowerShell 7 installed - open a NEW terminal for `pwsh` to be on your PATH.' -ForegroundColor Green
+    }
+}
+
 function Show-Disclaimer {
     Write-Host ''
     Write-Host '  ============================================================' -ForegroundColor Yellow
@@ -152,6 +209,10 @@ if ($Uninstall) {
 
 # ------------------------------------------------------------------- install
 Show-Disclaimer
+
+Write-Host ''
+Write-Host '  Checking prerequisites...' -ForegroundColor Cyan
+Ensure-Pwsh7
 
 $source = Join-Path $PSScriptRoot '..\releases\win-x64\MCPTerminal.exe'
 if (-not (Test-Path $source)) { throw "Release binary not found: $source (build it first, or use setup\get.ps1)" }

@@ -63,7 +63,8 @@ tool — and it deserves a clear-eyed disclaimer:
 12. [Building from source & releases](#building-from-source--releases)
 13. [Platform notes](#platform-notes)
 14. [Security & privacy](#security--privacy)
-15. [Troubleshooting](#troubleshooting)
+15. [Where the logs are](#where-the-logs-are)
+16. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -562,6 +563,49 @@ the target machine.
   pressing ↑ recalls it. Clear or isolate history if that matters to you.
 - Installer one-liners fetch and run the `main` branch. Read the scripts, or
   clone and run `setup/install.ps1` yourself if you prefer to pin a commit.
+
+---
+
+## Where the logs are
+
+Everything lives under one root — `%LOCALAPPDATA%\MCPTerminal` on Windows,
+`~/.local/share/mcpterminal` on Linux/macOS (override with `MCPTERMINAL_ROOT`).
+Open it with:
+
+```powershell
+explorer $env:LOCALAPPDATA\MCPTerminal
+```
+
+| File | What it tells you |
+|---|---|
+| `studio-errors.log` | **Start here when Studio misbehaves.** Every failure to open a terminal is written here with the shell, the arguments and the full exception — a WebView console message would be invisible in a shipped app. Also records orphaned sessions reaped at startup. |
+| `index.json` | Every session ever created: name, shell, status, owning tab. |
+| `tabs.json` | Tab → access key. `Local` never appears; it has no key. |
+| `studio.lock` | PID of the running Studio. A launch hands off to that process if the PID is alive — a stale lock naming a live *unrelated* PID makes new terminals vanish into nothing. Delete it if Studio is not running. |
+| `requests\*.newterm` | Pending external launch requests. Studio drains these every 500 ms, so **files piling up here mean Studio is not picking them up**. |
+| `sessions\<guid>\transcript.log` | Plain-text transcript (ANSI stripped). |
+| `sessions\<guid>\screen.log` | Raw byte mirror of the screen, replayed by the History tab. |
+| `sessions\<guid>\assistant-cmds.log` | Which commands came from an assistant, and which chat. |
+| `sessions\<guid>\state.json` | Live status, owning chat, access key, last-control timestamp. |
+
+### When new terminals will not open
+
+`studio-errors.log` names the cause. The usual ones:
+
+```powershell
+Get-Content $env:LOCALAPPDATA\MCPTerminal\studio-errors.log -Tail 30
+```
+
+- **"The system cannot find the file specified"** for `pwsh` — PowerShell 7 is
+  not installed. It is the default shell for new terminals. Install it with
+  `winget install --id Microsoft.PowerShell --exact` (the Windows installer now
+  offers this), or use the CMD / PS5 buttons meanwhile.
+- The same error for `bash` or `wsl.exe` — Git for Windows or a WSL distro is
+  missing; those buttons need them.
+- **Nothing logged at all, and `requests\` is filling up** — Studio is not
+  draining requests: it is not actually running, or a stale `studio.lock` is
+  redirecting launches to a dead or unrelated process. Close Studio, delete
+  `studio.lock`, reopen.
 
 ---
 
