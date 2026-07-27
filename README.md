@@ -380,19 +380,20 @@ window, Cursor/Windsurf-style:
 - **Close a tab** with the ✕ that appears on hover; closing one with several
   terminals asks once, with *do the same for the rest*.
 - **Vertical terminal list** on the left, click through terminals like a list.
-- **Split panes with tabs, VS Code style.** A pane is a *group*: it can hold
-  several terminals as tabs and shows one at a time. Opening another terminal
-  (sidebar click, or a new one) adds a **tab to the focused group** — it never
-  evicts a pane you have arranged. Click a tab to switch; a background tab with
-  new output gets a dot.
-  Drag a terminal — from the sidebar or by its tab — and drop it against a pane
-  **edge** to split it out into its own pane, or in the **middle** of a pane to
-  move it into that group. A highlight shows exactly where it will land. Drag the
-  divider between panes to resize; docking on an axis that already runs that way
-  keeps the row or column flat rather than nesting. Closing a terminal removes
-  just its tab, and an emptied group collapses back into the grid. Each
-  conversation tab keeps its own arrangement, and a lone terminal looks exactly
-  as it always did.
+- **Pick a layout, then fill the zones.** At the top of the sidebar, four buttons
+  choose the split: **one**, **two side by side**, **two stacked**, or **four
+  quarters**. Each button is a miniature of the layout it selects, so there is
+  nothing to misread. Pick one and your terminals drop into the numbered zones
+  automatically — no arranging needed to get started.
+  Below the buttons is the **zone map**: one box per zone showing which terminal
+  is in it. Drag a terminal from the list onto a box (or onto the zone itself in
+  the pane area) to put it there; dropping onto an occupied zone **swaps** the
+  two, so nothing on screen is silently lost. Drag the divider between zones to
+  resize.
+  A terminal that is not in any zone still opens on demand: **click it in the
+  list and it fills the whole area on its own**, leaving your zones exactly as
+  they were. Click any zone to go back. Each conversation keeps its own layout,
+  zone assignment and divider positions.
 - **Embedded native terminals** (ConPTY + xterm rendering): PS7 / CMD /
   Git Bash / WSL via the `+` buttons — they join the tab you launch them from.
   Full copy/paste: select-to-copy, right-click paste, Ctrl+C (with selection) /

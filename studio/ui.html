@@ -131,15 +131,56 @@
 
   /* ---- terminal panes ---- */
   #paneWrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  /* tabs inside a pane: one per terminal in the group */
-  .ptabs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: none; }
-  .ptab { font-weight: 600; color: var(--dim); white-space: nowrap; cursor: pointer;
-    max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-  .ptabs.multi .ptab { padding: 2px 9px; border-radius: 5px; border: 1px solid transparent; }
-  .ptabs.multi .ptab:hover { color: var(--fg); }
-  .ptabs.multi .ptab.on { background: var(--bg2); border-color: var(--line); }
-  .ptab.closed { font-style: italic; color: #f87171; }
-  .ptab.unseen::after { content: ' •'; color: var(--accent); }
+  /* The name always survives; the id and key give way first when a zone is
+     narrow, so a quarter-pane header stays readable. */
+  .phName { font-weight: 600; color: var(--dim); flex: none; }
+  .pane.focused .pstrip .phName { color: var(--fg); }
+  .pstrip .phId { flex: 0 1 auto; min-width: 0; }
+  .pstrip .phKey { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .pstrip .phStatus { font-size: 11px; }
+
+  /* ---- layout picker + zone map (sidebar) ---- */
+  #layoutBtns { display: flex; gap: 4px; }
+  .lbtn { background: var(--bg3); border: 1px solid var(--line); border-radius: 5px;
+    padding: 5px; cursor: pointer; line-height: 0; }
+  .lbtn:hover { border-color: var(--accent); }
+  .lbtn.on { border-color: var(--accent); background: var(--bg2); }
+  /* each glyph is a miniature of the layout it selects */
+  .glyph { display: grid; width: 22px; height: 16px; gap: 2px; }
+  .glyph i { background: var(--dim); border-radius: 1px; display: block; }
+  .lbtn.on .glyph i { background: var(--accent); }
+  .glyph.single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .glyph.single i:nth-child(n+2) { display: none; }
+  .glyph.lr { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+  .glyph.lr i:nth-child(n+3) { display: none; }
+  .glyph.tb { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .glyph.tb i:nth-child(n+3) { display: none; }
+  .glyph.quad { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+  .zonemap { display: grid; gap: 4px; margin: 0 12px 10px; }
+  .zonemap.soloing .zbox { opacity: .55; }
+  .sololine { grid-column: 1 / -1; color: var(--accent); font-size: 10px;
+    padding: 1px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .zonemap.single { grid-template-columns: 1fr; }
+  .zonemap.lr { grid-template-columns: 1fr 1fr; }
+  .zonemap.tb { grid-template-columns: 1fr; }
+  .zonemap.quad { grid-template-columns: 1fr 1fr; }
+  .zbox { border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px;
+    min-height: 42px; display: flex; flex-direction: column; gap: 2px;
+    background: var(--bg); cursor: pointer; overflow: hidden; }
+  .zbox .zn { color: var(--dim); font-size: 9px; letter-spacing: .08em; }
+  .zbox .zt { color: var(--fg); font-size: 11px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .zbox.empty { border-style: dashed; }
+  .zbox.empty .zt { color: var(--dim); font-style: italic; }
+  .zbox.focus { border-color: var(--accent); background: var(--bg3); }
+  .zonemap.dropping .zbox { border-color: var(--accent); border-style: dashed; }
+  .zbox.over { background: rgba(34, 211, 238, .18); border-style: solid; }
+
+  /* an empty zone in the pane area */
+  .zempty { position: absolute; border: 1px dashed var(--line); border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 11px; pointer-events: none; }
   .phdim { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
   .phchip { font-size: 10px; color: var(--dim); background: var(--bg);
     border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; flex: none; }
@@ -168,7 +209,6 @@
      one lifts slightly and its name returns to full strength. */
   .pstrip { background: var(--bg); }
   .pane.focused .pstrip { background: var(--bg3); }
-  .pane.focused .pstrip .ptab.on { color: var(--fg); }
   .pstrip:active { cursor: grabbing; }
   .pstrip .x { color: var(--dim); flex: none; padding: 0 4px; cursor: pointer; }
   .pstrip .x:hover { color: #f87171; }
@@ -229,6 +269,8 @@
   <div id="tabs"></div>
   <div id="main">
     <div id="side">
+      <div class="head"><span>LAYOUT</span><span id="layoutBtns"></span></div>
+      <div id="zonemap" class="zonemap single"></div>
       <div class="head"><span>TERMINALS</span>
         <span id="newBtns">
           <button data-shell="pwsh" class="plus" title="New terminal (PowerShell 7)">+</button>
@@ -515,7 +557,7 @@ function renderList() {
       ev.stopPropagation();
       if (t.closed) {   // dismiss the tombstone locally
         t.term.dispose(); t.el.remove(); terms.delete(t.id);
-        layoutRemove(convOf(t), t.id);   // its slot collapses back into the grid
+        clearTerm(convOf(t), t.id);      // its zone empties out
         if (activeTerm === t.id) activeTerm = null;
         renderAll();
       } else send({ type: 'closeTerm', id: t.id });
@@ -536,41 +578,6 @@ function renderList() {
   }
 }
 
-// One tab per terminal in the group, in the header of the member on screen.
-// A single-terminal group shows just its name, so nothing changes visually until
-// you actually put two terminals together.
-function renderGroupTabs(leaf, host) {
-  const box = host.strip?.querySelector('.ptabs');
-  if (!box) return;
-  box.innerHTML = '';
-  box.classList.toggle('multi', leaf.ids.length > 1);
-  leaf.ids.forEach((id, i) => {
-    const t = terms.get(id);
-    if (!t) return;
-    const el = document.createElement('span');
-    el.className = 'ptab' + (i === leaf.ai ? ' on' : '') + (t.closed ? ' closed' : '');
-    el.textContent = t.name;
-    el.title = t.name + ' - click to show, drag to move it elsewhere';
-    el.draggable = true;
-    el.addEventListener('dragstart', ev => { ev.stopPropagation(); beginTermDrag(ev, id); });
-    el.addEventListener('mousedown', ev => {
-      ev.stopPropagation();
-      if (leaf.ai !== i) { leaf.ai = i; activeTerm = id; renderAll(); terms.get(id)?.term.focus(); }
-      else setFocusPane(id);
-    });
-    if (t.unseen) el.classList.add('unseen');
-    box.appendChild(el);
-  });
-}
-
-// Redraw the tabs of whichever group holds this terminal (its own tab may be
-// the hidden one, so the strip we update belongs to the member on screen).
-function refreshGroupTabsFor(id) {
-  const leaf = findLeaf(rootOf(activeConv), id);
-  if (!leaf) return;
-  const host = terms.get(shownId(leaf));
-  if (host) renderGroupTabs(leaf, host);
-}
 
 // Fill one pane's header. Every pane carries the same set of fields, so a split
 // never leaves you guessing which terminal a pane is - or what its key, owning
@@ -578,6 +585,7 @@ function refreshGroupTabsFor(id) {
 function updatePaneHeader(t) {
   if (!t?.strip) return;
   const q = c => t.strip.querySelector('.' + c);
+  q('phName').textContent = t.name;
   q('phId').textContent = t.shortId ?? '';
   q('phShell').textContent = t.shell;
   const pk = q('phKey');
@@ -613,173 +621,162 @@ function updatePaneHeader(t) {
 function updatePaneHead() { for (const t of terms.values()) updatePaneHeader(t); }
 
 // ============================================================== the pane grid
-// Each conversation tab owns a layout tree, the same shape VS Code's grid uses:
-//   leaf  = { t:'leaf', ids:[terminal ids], ai:<active index> }   a GROUP
-//   split = { t:'split', dir:'row'|'col', kids:[], sz:[fractions] }
-// 'row' lays its children out left-to-right, 'col' top-to-bottom.
+// Each conversation picks a LAYOUT from a fixed set and its terminals sit in
+// numbered ZONES:
 //
-// A leaf is a group of terminals sharing one rectangle, showing one at a time
-// with a tab per member - the same as a VS Code editor group. This is what stops
-// a third terminal from evicting one of two you have arranged: it opens as
-// another TAB in the focused group, and you switch between them by clicking.
-// Drag a tab to an edge to split it out into a group of its own.
-const layouts = new Map();          // conversation label -> root node
+//   single   [1]        lr  [1|2]      tb  [1]      quad  [1|2]
+//                                          [2]            [3|4]
+//
+//   { mode:'single'|'lr'|'tb'|'quad', slots:[id|null,...], fx, fy, focus }
+//
+// Zones auto-populate: pick a layout and the conversation's terminals drop into
+// the empty zones in order. Drag a terminal onto a zone - in the pane area or on
+// the little zone map in the sidebar - to place it there; dragging onto an
+// occupied zone swaps the two. fx/fy are the divider positions.
+const LAYOUTS = {
+  single: { zones: 1, label: 'One terminal' },
+  lr:     { zones: 2, label: 'Two side by side' },
+  tb:     { zones: 2, label: 'Two stacked' },
+  quad:   { zones: 4, label: 'Four quarters' },
+};
+const layouts = new Map();          // conversation label -> layout state
 const GAP = 6, EDGE = 8;            // px between panes, and around the whole area
 let paneRects = [];                 // last computed geometry, used for hit-testing
 
-function rootOf(conv) { return layouts.get(conv) ?? null; }
-function setRoot(conv, node) { if (node) layouts.set(conv, node); else layouts.delete(conv); }
+// `solo` holds a terminal that is NOT in any zone but is being shown on its own
+// across the whole area - clicking an unplaced terminal in the list gives you
+// the full view of it without disturbing the zones you have set up. Putting it
+// in a zone, or going back to a zone, drops the solo view.
+function layoutOf(conv) {
+  let L = layouts.get(conv);
+  if (!L) { L = { mode: 'single', slots: [null], fx: .5, fy: .5, focus: 0, solo: null }; layouts.set(conv, L); }
+  return L;
+}
+// The solo terminal, but only while it is real and still unplaced.
+function soloOf(conv) {
+  const L = layoutOf(conv);
+  if (!L.solo) return null;
+  const t = terms.get(L.solo);
+  if (!t || convOf(t) !== conv || L.slots.includes(L.solo)) { L.solo = null; return null; }
+  return L.solo;
+}
+function zoneCount(L) { return LAYOUTS[L.mode].zones; }
 
-function eachLeaf(node, fn) {
-  if (!node) return;
-  if (node.t === 'leaf') { fn(node); return; }
-  for (const k of node.kids) eachLeaf(k, fn);
-}
-// every terminal in the tree, across all groups
-function leafIds(node) { const out = []; eachLeaf(node, l => out.push(...l.ids)); return out; }
-// the group holding this terminal
-function findLeaf(node, id) {
-  let hit = null;
-  eachLeaf(node, l => { if (l.ids.includes(id)) hit = l; });
-  return hit;
-}
-// the terminal a group is currently showing
-function shownId(leaf) { return leaf.ids[Math.min(leaf.ai ?? 0, leaf.ids.length - 1)]; }
-function newLeaf(id) { return { t: 'leaf', ids: [id], ai: 0 }; }
-// Is this exact node still part of the tree? (Identity, not id - a drop looks
-// its target up before removing the dragged pane, and the removal can collapse
-// the tree around it.)
-function hasNode(node, needle) {
-  if (!node || !needle) return false;
-  if (node === needle) return true;
-  return node.t === 'split' && node.kids.some(k => hasNode(k, needle));
-}
-function findParent(node, child) {
-  if (!node || node.t === 'leaf') return null;
-  if (node.kids.includes(child)) return node;
-  for (const k of node.kids) { const p = findParent(k, child); if (p) return p; }
-  return null;
+// Terminals belonging to this conversation, in sidebar order.
+function convTerms(conv) { return [...terms.values()].filter(t => convOf(t) === conv); }
+
+function setMode(conv, mode) {
+  const L = layoutOf(conv);
+  const keep = L.slots.filter(Boolean);          // preserve what was on screen
+  L.solo = null;                                 // picking a layout means show it
+  L.mode = mode;
+  L.slots = Array.from({ length: zoneCount(L) }, (_, i) => keep[i] ?? null);
+  if (L.focus >= L.slots.length) L.focus = 0;
+  fillZones(conv);
 }
 
-// Drop a terminal out of the tree. Its group survives while it still has other
-// tabs; an emptied group is removed, collapsing any split left with one child.
-function layoutRemove(conv, id) {
-  const root = rootOf(conv);
-  const leaf = findLeaf(root, id);
-  if (!leaf) return;
-  const at = leaf.ids.indexOf(id);
-  leaf.ids.splice(at, 1);
-  if (leaf.ids.length) {                   // group lives on - keep a sane tab active
-    if (leaf.ai > at || leaf.ai >= leaf.ids.length) leaf.ai = Math.max(0, leaf.ai - 1);
-    return;
-  }
-  if (leaf === root) { setRoot(conv, null); return; }
-  const p = findParent(root, leaf);
-  const i = p.kids.indexOf(leaf);
-  p.kids.splice(i, 1); p.sz.splice(i, 1);
-  if (p.kids.length === 1) {
-    const only = p.kids[0];
-    const gp = findParent(root, p);
-    if (!gp) setRoot(conv, only);
-    else gp.kids[gp.kids.indexOf(p)] = only;
+// Drop unplaced terminals into empty zones, so choosing a layout immediately
+// shows something in every zone rather than a grid of holes.
+function fillZones(conv) {
+  const L = layoutOf(conv);
+  const placed = new Set(L.slots.filter(Boolean));
+  const spare = convTerms(conv).filter(t => !placed.has(t.id)).map(t => t.id);
+  for (let i = 0; i < L.slots.length && spare.length; i++)
+    if (!L.slots[i]) L.slots[i] = spare.shift();
+}
+
+function slotOf(conv, id) { return layoutOf(conv).slots.indexOf(id); }
+
+// Put a terminal in a zone. If it was already in another zone the two swap, so
+// nothing you had on screen is silently dropped.
+function placeInZone(conv, zone, id) {
+  const L = layoutOf(conv);
+  if (zone < 0 || zone >= L.slots.length) return;
+  L.solo = null;                       // it has a home now
+
+  const from = L.slots.indexOf(id);
+  const displaced = L.slots[zone];
+  L.slots[zone] = id;
+  if (from >= 0 && from !== zone) L.slots[from] = displaced;
+  L.focus = zone;
+}
+
+function clearTerm(conv, id) {
+  const L = layouts.get(conv);
+  if (!L) return;
+  const i = L.slots.indexOf(id);
+  if (i >= 0) L.slots[i] = null;
+}
+
+// Zone rectangles for the current layout, plus the dividers between them.
+function computeRects(L, x, y, w, h) {
+  const panes = [], sashes = [];
+  const px = (n, f) => Math.round(n * f);
+  if (L.mode === 'single') {
+    panes.push({ zone: 0, x, y, w, h });
+  } else if (L.mode === 'lr') {
+    const wl = px(w - GAP, L.fx);
+    panes.push({ zone: 0, x, y, w: wl, h });
+    panes.push({ zone: 1, x: x + wl + GAP, y, w: w - wl - GAP, h });
+    sashes.push({ x: x + wl, y, w: GAP, h, dir: 'row', axis: 'fx' });
+  } else if (L.mode === 'tb') {
+    const ht = px(h - GAP, L.fy);
+    panes.push({ zone: 0, x, y, w, h: ht });
+    panes.push({ zone: 1, x, y: y + ht + GAP, w, h: h - ht - GAP });
+    sashes.push({ x, y: y + ht, w, h: GAP, dir: 'col', axis: 'fy' });
   } else {
-    const s = p.sz.reduce((a, b) => a + b, 0);
-    p.sz = p.sz.map(v => v / s);          // renormalise the survivors
+    const wl = px(w - GAP, L.fx), ht = px(h - GAP, L.fy);
+    const wr = w - wl - GAP, hb = h - ht - GAP;
+    panes.push({ zone: 0, x, y, w: wl, h: ht });
+    panes.push({ zone: 1, x: x + wl + GAP, y, w: wr, h: ht });
+    panes.push({ zone: 2, x, y: y + ht + GAP, w: wl, h: hb });
+    panes.push({ zone: 3, x: x + wl + GAP, y: y + ht + GAP, w: wr, h: hb });
+    sashes.push({ x: x + wl, y, w: GAP, h, dir: 'row', axis: 'fx' });
+    sashes.push({ x, y: y + ht, w, h: GAP, dir: 'col', axis: 'fy' });
   }
+  return { panes, sashes };
 }
 
-// Insert `id` next to `target` on the given side. Docking against a split that
-// already runs in that direction joins it rather than nesting another level -
-// this is what keeps three side-by-side panes flat instead of stair-stepped.
-function layoutInsert(conv, target, side, id) {
-  layoutRemove(conv, id);                 // a terminal appears in the grid once
-  const root = rootOf(conv);
-  if (!root) { setRoot(conv, newLeaf(id)); return; }
-  // dropped past the edge of every pane: dock against the first one we have
-  if (!hasNode(root, target)) { target = null; eachLeaf(root, l => { target ??= l; }); }
-  // dropped in the middle of a group: join it as another tab, nothing is evicted
-  if (side === 'center') { target.ids.push(id); target.ai = target.ids.length - 1; return; }
-  const dir = (side === 'left' || side === 'right') ? 'row' : 'col';
-  const before = (side === 'left' || side === 'top');
-  const leaf = newLeaf(id);
-  const p = findParent(root, target);
-  if (p && p.dir === dir) {
-    const i = p.kids.indexOf(target);
-    const at = before ? i : i + 1;
-    const share = p.sz[i] / 2;            // the new pane takes half of its neighbour
-    p.sz[i] = share;
-    p.kids.splice(at, 0, leaf); p.sz.splice(at, 0, share);
-    return;
-  }
-  // Convert the target leaf into a split IN PLACE. Rewriting the node instead of
-  // replacing it in its parent keeps every existing reference to it valid and
-  // means the root case needs no special handling.
-  const moved = { t: 'leaf', ids: target.ids, ai: target.ai };
-  delete target.ids; delete target.ai;
-  target.t = 'split'; target.dir = dir;
-  target.kids = before ? [leaf, moved] : [moved, leaf];
-  target.sz = [.5, .5];
-}
-
-// Tree -> pixel rectangles. Sizes are fractions, so the grid reflows on resize.
-function computeRects(node, x, y, w, h, panes, sashes) {
-  if (!node) return;
-  if (node.t === 'leaf') { panes.push({ id: shownId(node), leaf: node, x, y, w, h }); return; }
-  const n = node.kids.length;
-  const horiz = node.dir === 'row';
-  const avail = (horiz ? w : h) - GAP * (n - 1);
-  let off = 0;
-  for (let i = 0; i < n; i++) {
-    // last child absorbs the rounding so panes always meet exactly
-    const size = i === n - 1 ? avail - off : Math.max(60, Math.round(avail * node.sz[i]));
-    if (horiz) {
-      computeRects(node.kids[i], x + off, y, size, h, panes, sashes);
-      if (i < n - 1) sashes.push({ x: x + off + size, y, w: GAP, h, dir: 'row', node, i });
-    } else {
-      computeRects(node.kids[i], x, y + off, w, size, panes, sashes);
-      if (i < n - 1) sashes.push({ x, y: y + off + size, w, h: GAP, dir: 'col', node, i });
-    }
-    off += size + GAP;
-  }
-}
-
-// Make sure the active tab always has something on screen.
+// Keep the layout honest: forget terminals that went away or moved to another
+// conversation, then top up any empty zones.
 function ensureLayout() {
-  const mine = [...terms.values()].filter(t => convOf(t) === activeConv);
-  const root = rootOf(activeConv);
-  // Drop leaves that no longer belong here: the terminal has gone away, or it
-  // has moved to another tab (an assistant claiming a Local terminal changes
-  // which conversation owns it). Without this it would keep rendering in the
-  // grid of the tab it left.
-  for (const id of leafIds(root)) {
-    const t = terms.get(id);
-    if (!t || convOf(t) !== activeConv) layoutRemove(activeConv, id);
+  const L = layoutOf(activeConv);
+  for (let i = 0; i < L.slots.length; i++) {
+    const t = L.slots[i] && terms.get(L.slots[i]);
+    if (!t || convOf(t) !== activeConv) L.slots[i] = null;
   }
-  if (!rootOf(activeConv) && mine.length) {
-    const seed = mine.find(t => t.id === activeTerm) ?? mine[0];
-    setRoot(activeConv, newLeaf(seed.id));
+  const solo = soloOf(activeConv);
+  if (solo) { activeTerm = solo; return; }   // showing one terminal full-area
+  fillZones(activeConv);
+  const focused = L.slots[L.focus];
+  if (focused) activeTerm = focused;
+  else {
+    const first = L.slots.findIndex(Boolean);
+    if (first >= 0) { L.focus = first; activeTerm = L.slots[first]; }
   }
-  const shown = leafIds(rootOf(activeConv));
-  if (shown.length && !shown.includes(activeTerm)) activeTerm = shown[0];
 }
 
-// Move focus to a pane WITHOUT relaying out. Clicking a pane must not rebuild
+// Move focus to a zone WITHOUT relaying out. Clicking a pane must not rebuild
 // the grid: a full render recreates the sashes and re-fits every terminal, which
 // is both wasteful and enough to cancel a drag gesture that is just starting.
 function setFocusPane(id, focusTerm = true) {
   if (!terms.has(id)) return;
   if (activeTerm !== id) {
     activeTerm = id;
+    const z = slotOf(activeConv, id);
+    if (z >= 0) layoutOf(activeConv).focus = z;
     for (const t of terms.values()) t.el.classList.toggle('focused', t.id === activeTerm);
     markRows();
     updatePaneHead();
+    renderZoneMap();
   }
   if (focusTerm && !historyMode) terms.get(id).term.focus();
 }
 
-// Terminals actually visible right now: a group shows one of its tabs, so this
-// is not the same as "every terminal in the grid".
-function visibleIds() { return new Set(paneRects.map(r => r.id)); }
+function visibleIds() {
+  const solo = soloOf(activeConv);
+  return new Set(solo ? [solo] : layoutOf(activeConv).slots.filter(Boolean));
+}
 
 // Repaint the sidebar's active/on-screen classes in place.
 function markRows() {
@@ -791,16 +788,26 @@ function markRows() {
   }
 }
 
-// Open a terminal (sidebar click, or a newly created one). If it is already
-// somewhere in the grid, just switch to it. Otherwise it joins the focused group
-// as another TAB - it never evicts a terminal you have arranged on screen.
+// A terminal you just created should be visible immediately: give it a free
+// zone if there is one, otherwise the zone you are working in. (Only *clicking*
+// an existing unplaced terminal solos it - see below.)
+function openNewTerminal(id) {
+  const L = layoutOf(activeConv);
+  L.solo = null;
+  const free = L.slots.indexOf(null);
+  placeInZone(activeConv, free >= 0 ? free : L.focus, id);
+  activeTerm = id;
+}
+
+// Clicking a terminal in the sidebar. One that already has a zone just gets the
+// focus (and drops any solo view). One with no zone is shown on its own across
+// the whole area - your zone assignment is left exactly as it was, so this is a
+// look at something without giving up the arrangement.
 function showInFocusedPane(id) {
-  const root = rootOf(activeConv);
-  const have = findLeaf(root, id);
-  if (have) { have.ai = have.ids.indexOf(id); activeTerm = id; return; }
-  const cur = findLeaf(root, activeTerm);
-  if (cur) { cur.ids.push(id); cur.ai = cur.ids.length - 1; }
-  else setRoot(activeConv, newLeaf(id));
+  const L = layoutOf(activeConv);
+  const at = L.slots.indexOf(id);
+  if (at >= 0) { L.solo = null; L.focus = at; activeTerm = id; return; }
+  L.solo = id;
   activeTerm = id;
 }
 
@@ -816,28 +823,31 @@ function applyLayout(quick = false) {
     return;
   }
   ensureLayout();
-  const root = rootOf(activeConv);
+  const L = layoutOf(activeConv);
   const box = $panes.getBoundingClientRect();
-  const panes = [], sashes = [];
-  computeRects(root, EDGE, EDGE, Math.max(0, box.width - EDGE * 2),
-               Math.max(0, box.height - EDGE * 2), panes, sashes);
+  const W = Math.max(0, box.width - EDGE * 2), H = Math.max(0, box.height - EDGE * 2);
+  const solo = soloOf(activeConv);
+  // A soloed terminal owns the whole area and there is nothing to resize.
+  const { panes, sashes } = solo
+    ? { panes: [{ zone: -1, x: EDGE, y: EDGE, w: W, h: H }], sashes: [] }
+    : computeRects(L, EDGE, EDGE, W, H);
+  // carry the terminal each zone is showing, for hit-testing and positioning
+  for (const p of panes) p.id = solo ?? L.slots[p.zone];
   paneRects = panes;
   $panes.classList.toggle('split', panes.length > 1);
 
-  // Only each group's active member is on screen; its siblings stay alive off
-  // screen and are reachable through the group's tabs.
-  const shown = new Set(panes.map(p => p.id));
+  const shown = new Set(panes.map(p => p.id).filter(Boolean));
   for (const t of terms.values()) {
-    const on = !historyMode && shown.has(t.id);
+    const on = shown.has(t.id);
     t.el.classList.toggle('shown', on);
     t.el.classList.toggle('focused', on && t.id === activeTerm);
     if (!on) continue;
     const r = panes.find(p => p.id === t.id);
     t.el.style.left = r.x + 'px'; t.el.style.top = r.y + 'px';
     t.el.style.width = r.w + 'px'; t.el.style.height = r.h + 'px';
-    renderGroupTabs(r.leaf, t);
     updatePaneHeader(t);
   }
+  renderEmptyZones(panes);
 
   // Reuse the sash elements. Recreating them every layout would destroy the one
   // holding the pointer capture mid-drag, which is what made the divider fall
@@ -874,12 +884,31 @@ function applyLayout(quick = false) {
     // triggered by anything - a status tick, a window resize, another pane
     // closing - and it must never yank the caret out of the pane you are typing
     // in and back to the first one in the grid.
-    if (!historyMode && !document.activeElement?.closest?.('.pane'))
+    if (!document.activeElement?.closest?.('.pane'))
       terms.get(activeTerm)?.term.focus();
   });
 }
 
-// ---- sash dragging: move one boundary, leave the rest of the grid alone
+// A zone with nothing in it still shows its outline and invites a drop.
+let emptyEls = [];
+function renderEmptyZones(panes) {
+  const holes = panes.filter(p => !p.id);
+  while (emptyEls.length > holes.length) emptyEls.pop().remove();
+  while (emptyEls.length < holes.length) {
+    const el = document.createElement('div');
+    el.className = 'zempty';
+    $panes.appendChild(el);
+    emptyEls.push(el);
+  }
+  holes.forEach((p, i) => {
+    const el = emptyEls[i];
+    el.style.left = p.x + 'px'; el.style.top = p.y + 'px';
+    el.style.width = p.w + 'px'; el.style.height = p.h + 'px';
+    el.textContent = 'zone ' + (p.zone + 1) + ' - drag a terminal here';
+  });
+}
+
+// ---- sash dragging: move one divider, leave the rest of the grid alone
 // Tracking lives on the WINDOW, not the sash: the pointer routinely outruns the
 // 6px handle, and it must keep following the mouse anywhere on screen (even
 // outside the app) until the button comes up.
@@ -889,20 +918,18 @@ function startSash(ev, el) {
   ev.preventDefault();
   el.classList.add('dragging');
   document.body.style.cursor = s.dir === 'row' ? 'col-resize' : 'row-resize';
+  const L = layoutOf(activeConv);
   const horiz = s.dir === 'row';
-  const total = (horiz ? box.width : box.height) - EDGE * 2;
-  const pair = s.node.sz[s.i] + s.node.sz[s.i + 1];
+  const total = (horiz ? box.width : box.height) - EDGE * 2 - GAP;
   const start = horiz ? ev.clientX : ev.clientY;
-  const from = s.node.sz[s.i];
+  const from = L[s.axis];
   let pending = start, raf = 0;
 
   const apply = () => {
     raf = 0;
     const d = (pending - start) / total;
-    const lo = 0.08, hi = pair - 0.08;                 // never squeeze a pane to nothing
-    s.node.sz[s.i] = Math.min(hi, Math.max(lo, from + d));
-    s.node.sz[s.i + 1] = pair - s.node.sz[s.i];
-    applyLayout(true);                                 // geometry only while dragging
+    L[s.axis] = Math.min(.9, Math.max(.1, from + d));   // never squeeze to nothing
+    applyLayout(true);                                  // geometry only while dragging
   };
   // Coalesce to one update per frame. Pointer events fire far faster than the
   // screen refreshes, and doing a full layout per event is what made the
@@ -925,7 +952,7 @@ function startSash(ev, el) {
   window.addEventListener('pointercancel', up);
 }
 
-// ---- drag a terminal onto a pane edge to dock it there
+// ---- drag a terminal into a zone
 let dragId = null;
 
 function beginTermDrag(ev, id) {
@@ -933,76 +960,119 @@ function beginTermDrag(ev, id) {
   ev.dataTransfer.effectAllowed = 'move';
   ev.dataTransfer.setData('text/plain', id);
   $drop.classList.add('on');
+  document.getElementById('zonemap')?.classList.add('dropping');
 }
 function endTermDrag() {
   dragId = null;
   $drop.classList.remove('on');
   $hint.classList.remove('on');
+  document.getElementById('zonemap')?.classList.remove('dropping');
+  for (const el of document.querySelectorAll('.zbox.over')) el.classList.remove('over');
 }
 document.addEventListener('dragend', endTermDrag);
 
-// Which pane is under the cursor, and which quarter of it - the same five
-// targets VS Code offers: four edges to split, the middle to take the pane over.
+// Which zone is under the cursor.
 function hitTest(clientX, clientY) {
   const box = $panes.getBoundingClientRect();
   const px = clientX - box.left, py = clientY - box.top;
-  const r = paneRects.find(p => px >= p.x && px <= p.x + p.w && py >= p.y && py <= p.y + p.h);
-  if (!r) return null;
-  const fx = (px - r.x) / r.w, fy = (py - r.y) / r.h;
-  const d = { left: fx, right: 1 - fx, top: fy, bottom: 1 - fy };
-  let side = 'center', best = 0.25;
-  for (const k in d) if (d[k] < best) { best = d[k]; side = k; }
-  return { rect: r, side };
+  return paneRects.find(p => px >= p.x && px <= p.x + p.w && py >= p.y && py <= p.y + p.h) ?? null;
 }
 
 $drop.addEventListener('dragover', ev => {
   if (!dragId) return;
   ev.preventDefault();
-  const h = hitTest(ev.clientX, ev.clientY);
-  // No highlight over the pane being dragged, or over empty background - those
-  // drops do nothing, and promising a landing spot would be a lie.
-  if (!h || h.rect.id === dragId) {
-    ev.dataTransfer.dropEffect = 'none';
-    $hint.classList.remove('on');
-    return;
-  }
+  const r = hitTest(ev.clientX, ev.clientY);
+  if (!r) { ev.dataTransfer.dropEffect = 'none'; $hint.classList.remove('on'); return; }
   ev.dataTransfer.dropEffect = 'move';
-  const { rect: r, side } = h;
-  const half = { left: [r.x, r.y, r.w / 2, r.h], right: [r.x + r.w / 2, r.y, r.w / 2, r.h],
-                 top: [r.x, r.y, r.w, r.h / 2], bottom: [r.x, r.y + r.h / 2, r.w, r.h / 2],
-                 center: [r.x, r.y, r.w, r.h] }[side];
-  $hint.style.left = half[0] + 'px'; $hint.style.top = half[1] + 'px';
-  $hint.style.width = half[2] + 'px'; $hint.style.height = half[3] + 'px';
+  $hint.style.left = r.x + 'px'; $hint.style.top = r.y + 'px';
+  $hint.style.width = r.w + 'px'; $hint.style.height = r.h + 'px';
   $hint.classList.add('on');
 });
 
 $drop.addEventListener('drop', ev => {
   ev.preventDefault();
   const id = dragId || ev.dataTransfer.getData('text/plain');
-  const h = hitTest(ev.clientX, ev.clientY);
+  const r = hitTest(ev.clientX, ev.clientY);
   endTermDrag();
-  if (!id || !terms.get(id)) return;
-  const root = rootOf(activeConv);
-  const targetId = h ? h.rect.id : null;
-  // Dropping a pane on itself is a no-op, on every side. It used to fall through
-  // to "no valid target", which re-homed the pane into the FIRST slot in the
-  // grid - so a dragged pane appeared not to move, and clobbered whatever was
-  // in the top pane on the way.
-  if (targetId === id) return;
-  // Dropped on the background rather than on a pane: leave the grid alone unless
-  // there is nothing in it yet.
-  if (!targetId && root) return;
-  // Take it out of its old slot first, then re-home it. The target leaf is
-  // looked up again afterwards because removal can collapse the tree around it.
-  // Hold the target GROUP itself, not an id: removing the dragged terminal can
-  // change which tab that group is showing.
-  const target = h ? h.rect.leaf : null;
-  if (findLeaf(root, id)) layoutRemove(activeConv, id);
-  layoutInsert(activeConv, target, target ? h.side : 'center', id);
+  if (!id || !terms.get(id) || !r) return;
+  placeInZone(activeConv, r.zone, id);
   activeTerm = id;
   renderAll();
   terms.get(id)?.term.focus();      // you dropped it, you get to type in it
 });
+
+// ---- the layout picker and zone map in the sidebar
+function renderLayoutPicker() {
+  const host = document.getElementById('layoutBtns');
+  if (!host) return;
+  const L = layoutOf(activeConv);
+  host.innerHTML = '';
+  for (const [mode, def] of Object.entries(LAYOUTS)) {
+    const b = document.createElement('button');
+    b.className = 'lbtn' + (L.mode === mode ? ' on' : '');
+    b.title = def.label;
+    b.innerHTML = `<span class="glyph ${mode}"><i></i><i></i><i></i><i></i></span>`;
+    b.onclick = () => { layoutOf(activeConv).solo = null; setMode(activeConv, mode); renderAll(); };
+    host.appendChild(b);
+  }
+}
+
+// A small live map of the layout: one box per zone, showing what is in it and
+// accepting a terminal dragged from the list above it.
+function renderZoneMap() {
+  const host = document.getElementById('zonemap');
+  if (!host) return;
+  const L = layoutOf(activeConv);
+  const solo = soloOf(activeConv);
+  host.className = 'zonemap ' + L.mode + (dragId ? ' dropping' : '') + (solo ? ' soloing' : '');
+  host.innerHTML = '';
+  if (solo) {
+    const bar = document.createElement('div');
+    bar.className = 'sololine';
+    bar.textContent = 'showing ' + (terms.get(solo)?.name ?? '?') + ' full - click a zone to go back';
+    host.appendChild(bar);
+  }
+  for (let z = 0; z < zoneCount(L); z++) {
+    const box = document.createElement('div');
+    box.className = 'zbox' + (z === L.focus && !solo ? ' focus' : '') + (L.slots[z] ? '' : ' empty');
+    const t = L.slots[z] && terms.get(L.slots[z]);
+    box.innerHTML = `<span class="zn">${z + 1}</span><span class="zt"></span>`;
+    box.querySelector('.zt').textContent = t ? t.name : 'empty';
+    box.title = t ? `Zone ${z + 1}: ${t.name} - drag a terminal here to swap`
+                  : `Zone ${z + 1} is empty - drag a terminal here`;
+    box.addEventListener('dragover', ev => {
+      if (!dragId) return;
+      ev.preventDefault(); ev.dataTransfer.dropEffect = 'move';
+      box.classList.add('over');
+    });
+    box.addEventListener('dragleave', () => box.classList.remove('over'));
+    box.addEventListener('drop', ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const id = dragId || ev.dataTransfer.getData('text/plain');
+      endTermDrag();
+      if (!id || !terms.get(id)) return;
+      placeInZone(activeConv, z, id);
+      activeTerm = id;
+      renderAll();
+      terms.get(id)?.term.focus();
+    });
+    box.onclick = () => {
+      const id = L.slots[z];
+      const wasSolo = !!L.solo;
+      L.solo = null;                    // back to the layout
+      L.focus = z;
+      if (wasSolo) { activeTerm = id ?? activeTerm; renderAll(); terms.get(id)?.term.focus(); }
+      else if (id) setFocusPane(id);
+      else renderZoneMap();
+    };
+    // dragging a zone box moves that terminal to another zone
+    if (L.slots[z]) {
+      box.draggable = true;
+      box.addEventListener('dragstart', ev => beginTermDrag(ev, L.slots[z]));
+    }
+    host.appendChild(box);
+  }
+}
 
 function renderPanes() {
   $hist.classList.toggle('active', historyMode);
@@ -1011,6 +1081,8 @@ function renderPanes() {
   document.getElementById('dragbar').style.display = historyMode ? 'none' : 'block';
   updatePaneHead();
   applyLayout();
+  renderLayoutPicker();
+  renderZoneMap();
 }
 
 function renderAll() { renderTabs(); renderList(); renderPanes(); }
@@ -1026,7 +1098,7 @@ function addTerm(m) {
   strip.draggable = true;
   strip.title = 'Drag to dock this terminal left / right / above / below another';
   strip.innerHTML =
-    `<span class="ptabs"></span><span class="phId phdim"></span>` +
+    `<span class="phName"></span><span class="phId phdim"></span>` +
     `<span class="phShell phchip"></span><span class="phKey phchip"></span>` +
     `<span class="phspacer"></span><span class="phChat phdim"></span>` +
     `<span class="phStatus"></span><span class="x">&#10005;</span>`;
@@ -1086,9 +1158,8 @@ function addTerm(m) {
     conv: m.tab && m.tab !== 'Local' ? m.tab : '', key: m.key || '',
     controlAgo: -1, activeAgo: -1, unseen: false, liveUntil: 0 });
   updatePaneHeader(terms.get(m.id));
-  // a new terminal opens in the focused pane, like a new editor in the active group
   const conv = convOf(terms.get(m.id));
-  if (conv === activeConv) showInFocusedPane(m.id); else activeTerm = m.id;
+  if (conv === activeConv) openNewTerminal(m.id); else activeTerm = m.id;
   renderAll();
 }
 
@@ -1116,7 +1187,7 @@ bridge?.addEventListener('message', ev => {
             t.unseen = true;
             t.row?.querySelector('.unread')?.classList.add('has');
             // a terminal hidden behind another tab in its group gets a dot there
-            refreshGroupTabsFor(m.id);
+            renderZoneMap();          // dot on its zone box too
           }
         }
       }
@@ -1145,7 +1216,7 @@ bridge?.addEventListener('message', ev => {
       if (nameChanged && !convChanged) renderList();
       if (convChanged) {
         // it belongs to a different tab now - take it out of the old tab's grid
-        layoutRemove(oldConv, m.id);
+        clearTerm(oldConv, m.id);
         renderAll();
       }
       else {
