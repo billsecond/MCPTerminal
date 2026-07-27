@@ -11,8 +11,7 @@ namespace MCPTerminal;
 
 public static class ShellSupport
 {
-    public const string Credits =
-        "Designed & built by William Daugherty - william@daugherty.info - https://www.linkedin.com/in/wdaugherty/";
+    public const string Credits = "Designed & built by William Daugherty";
 
     // Short, silly, memorable session names: smug-owl-1, zippy-newt-2. With
     // ~1500 word pairs a clash is unlikely, and the trailing number makes it
