@@ -45,7 +45,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Access key. Only terminals this key unlocks are listed; others are not shown at all.' },
+        key: { type: 'string', description: 'Access key. Lists EVERY terminal in that tab - including ones the USER added to your tab after you connected, which you already have full access to. Terminals in other tabs are not shown at all. Call this whenever the user mentions terminals you have not seen; do not ask for another key.' },
       },
     },
   },
@@ -256,6 +256,13 @@ async function handleLine(line) {
           '  That mints a new tab and returns its ACCESS KEY. Remember that key and',
           '  pass it on every subsequent call, including later terminal_new calls, so',
           '  all your terminals land in the same tab.',
+          '- ONE KEY UNLOCKS YOUR WHOLE TAB, NOT ONE TERMINAL. It covers every',
+          '  terminal in that tab - including ones the USER creates in it after you',
+          '  connected. You already have full access to those: read them, type in',
+          '  them, rename them. If the user says "see my new terminals" or names one',
+          '  you do not recognise, call terminal_list with the key you already hold -',
+          '  it will be there. Asking for a second key is always wrong: a tab has',
+          '  exactly one key, and you have it.',
           '- If you lose the key you cannot get it back: the user must read it off the',
           '  terminal window (it is in the header and in `info` output) and paste it.',
           '  Ask them for it rather than guessing.',
