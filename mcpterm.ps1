@@ -94,6 +94,15 @@ function Get-OrCreateTab([string]$label, [string]$suppliedKey) {
     } else { [pscustomobject]@{} }
     if (-not $tabs) { $tabs = [pscustomobject]@{} }
 
+    # A key is a credential for one specific TAB: if it opens a tab, the caller
+    # joins THAT tab whatever it calls itself. This is what lets a second chat
+    # share a tab the user invited it into (see Add-TabGuest).
+    if ($suppliedKey) {
+        foreach ($p in $tabs.PSObject.Properties) {
+            if ($p.Value.key -eq $suppliedKey) { return @{ Label = $p.Name; Key = $p.Value.key } }
+        }
+    }
+
     $existing = $tabs.PSObject.Properties[$label]
     if ($existing) {
         if ($suppliedKey -and $existing.Value.key -eq $suppliedKey) {
@@ -129,6 +138,31 @@ function Claim-LocalSession($s, [string]$controllerLabel, [string]$suppliedKey) 
     return $tab
 }
 
+# SHARING: a tab can be worked by more than one conversation. The user hands a
+# second chat the tab's key (Studio's Share button on the tab), and that chat
+# arrives holding the key but calling itself something else - it is a GUEST.
+# Access is decided by the key alone; recording the guest here is what makes the
+# sharing visible in Studio's tabstrip and in `mcpterm tabs`.
+function Add-TabGuest([string]$sid, [string]$label) {
+    if (-not $label) { return }
+    try {
+        $sp = Join-Path $Root "sessions\$sid\state.json"
+        if (-not (Test-Path $sp)) { return }
+        $tab = (Get-Content $sp -Raw | ConvertFrom-Json).tabLabel
+        if (-not $tab -or $tab -ieq $label) { return }      # the owner, not a guest
+        $file = Join-Path $Root 'tabs.json'
+        if (-not (Test-Path $file)) { return }
+        $tabs = Get-Content $file -Raw | ConvertFrom-Json
+        $entry = $tabs.PSObject.Properties[$tab]
+        if (-not $entry) { return }
+        $guests = @(@($entry.Value.guests) | Where-Object { $_ })
+        if ($guests -contains $label) { return }
+        $entry.Value | Add-Member -Force NoteProperty guests ([string[]]($guests + $label))
+        [System.IO.File]::WriteAllText($file, ($tabs | ConvertTo-Json -Depth 8),
+            [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
 function Test-KeyMatch([string]$sid, [string]$supplied) {
     if (Test-IsLocal $sid) { return $false }     # must be claimed out of Local first
     $have = Get-SessionKey $sid
@@ -146,7 +180,10 @@ function New-AccessKey {
 }
 
 function Assert-Access($s, [string]$supplied) {
-    if (Test-KeyMatch $s.Sid $supplied) { return }
+    if (Test-KeyMatch $s.Sid $supplied) {
+        Add-TabGuest $s.Sid $Controller      # a second chat working a shared tab
+        return
+    }
     # A plain message, not a PowerShell exception: this text is what an
     # assistant reads back, and a stack trace only invites a retry.
     if (Test-IsLocal $s.Sid) {

@@ -71,6 +71,19 @@ public static class AccessKeys
     {
         string label = string.IsNullOrWhiteSpace(controller) ? LocalTab : controller.Trim();
 
+        // A key is a credential for one specific TAB, so if it opens a tab the
+        // caller joins THAT tab whatever it calls itself. This is what lets a
+        // second conversation share a tab the user invited it into: it holds the
+        // key but has its own name, and its terminals land beside the first
+        // chat's instead of branching off into a tab of their own.
+        if (!string.IsNullOrEmpty(suppliedKey))
+        {
+            foreach (var (name, node) in Load(root).Where(p => !IsLocal(p.Key))
+                         .Select(p => (p.Key, p.Value)))
+                if (node is JsonObject o && KeysEqual(o["key"]?.GetValue<string>() ?? "", suppliedKey))
+                    return (name, suppliedKey);
+        }
+
         // LOCAL IS YOURS ALONE. It never gets a key, so there is nothing to hand
         // out and nothing an assistant can present - the CLI refuses every
         // operation on a Local session. An untrusted caller that asks for Local

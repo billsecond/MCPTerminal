@@ -258,9 +258,45 @@ public sealed class StudioForm : Form
             Post(new
             {
                 type = "status", id = s.Id,
-                controller = controller ?? "", controlAgo, activeAgo, name, key,
+                // tab = where this terminal LIVES, controller = whoever drove it
+                // last. They differ once a tab is shared, and the tabstrip has to
+                // follow the tab: grouping by the controller made a shared
+                // terminal hop into a tab named after each chat in turn.
+                tab = s.TabLabel, controller = controller ?? "", controlAgo, activeAgo, name, key,
             });
         }
+        PushTabs();
+    }
+
+    // tabs.json (tab -> key + the guest chats invited into it) drives the
+    // "shared" marker on the tabstrip. It changes rarely, so it is only sent
+    // when the file actually moves. Keys are never posted to the UI here - the
+    // UI already knows its own terminals' keys, and nothing else needs them.
+    DateTime _tabsStamp;
+    void PushTabs()
+    {
+        try
+        {
+            string p = AccessKeys.TabsFile(_root);
+            if (!File.Exists(p)) return;
+            var when = File.GetLastWriteTimeUtc(p);
+            if (when == _tabsStamp) return;
+            _tabsStamp = when;
+            var tabs = JsonNode.Parse(File.ReadAllText(p)) as JsonObject;
+            if (tabs == null) return;
+            var info = new Dictionary<string, object>();
+            foreach (var (label, node) in tabs)
+            {
+                var guests = (node as JsonObject)?["guests"] as JsonArray;
+                info[label] = new
+                {
+                    guests = guests?.Select(g => g?.GetValue<string>() ?? "")
+                                    .Where(g => g.Length > 0).ToArray() ?? Array.Empty<string>(),
+                };
+            }
+            Post(new { type = "tabsInfo", tabs = info });
+        }
+        catch (Exception ex) { LogError("PushTabs", ex); }
     }
 
     // ---------------------------------------------------- external launches
