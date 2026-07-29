@@ -377,14 +377,28 @@ window, Cursor/Windsurf-style:
   strip), **amber** while an assistant is connected but quiet, **grey** when
   none is. A separate **purple pip** means unseen output. Your own typing never
   lights the green — it would only tell you what you already know.
-- **Close a tab** with the ✕ that appears on hover; closing one with several
-  terminals asks once, with *do the same for the rest*.
+- **Share a tab with a second chat** — the ⧉ icon on the tab. A tab has exactly
+  one access key covering everything in it, so sharing is handing that key over:
+  the dialog gives you a ready-to-paste invite (tab name, key, what is in it).
+  The second chat then lists, reads and drives the *same* terminals and stays in
+  the *same* tab however it labels itself — the key decides, not the name. The
+  tab is marked **shared** and names the chats in it, and each pane header says
+  which one is driving. Only you can share a tab; a chat cannot invite itself in.
+- **Close a terminal or a tab in one click.** The ✕ is always on screen (never
+  hover-only, which used to make it vanish under the pointer mid-click), and it
+  closes rather than leaving something behind to dismiss again. A tab with
+  several terminals asks once; *ask me about each one* is there if you want it.
+  Terminals closed by an assistant or by their own shell still leave the
+  italic-red tombstone row — those are the closes worth noticing.
 - **Vertical terminal list** on the left, click through terminals like a list.
-- **Pick a layout, then fill the zones.** At the top of the sidebar, four buttons
-  choose the split: **one**, **two side by side**, **two stacked**, or **four
-  quarters**. Each button is a miniature of the layout it selects, so there is
-  nothing to misread. Pick one and your terminals drop into the numbered zones
-  automatically — no arranging needed to get started.
+- **Pick a layout, then fill the zones.** At the top of the sidebar, thirteen
+  buttons choose the split: **one**, **two side by side**, **two stacked**,
+  **big left / big right / wide top / wide bottom with two beside it**, **four
+  quarters**, **three columns**, **three rows**, **three columns with the right
+  one split**, **wide top over four**, and **six panes**. Each button is a
+  miniature of the layout it selects, so there is nothing to misread. Pick one
+  and your terminals drop into the numbered zones automatically — no arranging
+  needed to get started.
   Below the buttons is the **zone map**: one box per zone showing which terminal
   is in it. Drag a terminal from the list onto a box (or onto the zone itself in
   the pane area) to put it there; dropping onto an occupied zone **swaps** the
@@ -437,8 +451,12 @@ open a new chat) after installing.
 ## MCP server
 
 `mcp/server.mjs` — a zero-dependency Node stdio MCP server exposing typed tools:
-`terminal_new`, `terminal_list`, `terminal_exec`, `terminal_read`,
-`terminal_attach`, `terminal_kill`. Register it in your MCP config, e.g.:
+`terminal_new`, `terminal_list`, `terminal_tabs`, `terminal_connect`,
+`terminal_exec`, `terminal_keys`, `terminal_read`, `terminal_rename`,
+`terminal_kill`. `terminal_tabs` is the orientation one: it describes the tabs
+**by name** and what is in each — the terminals, what each was last doing, and
+which chats are sharing it — with no session codes or access keys in the answer.
+Register it in your MCP config, e.g.:
 
 ```json
 { "mcpServers": { "mcpterminal": {

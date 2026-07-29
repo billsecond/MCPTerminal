@@ -13,7 +13,7 @@
 # run), waits for the acknowledgement, and prints the transcript delta.
 # =============================================================================
 param(
-    [Parameter(Position = 0)][ValidateSet('new', 'list', 'connect', 'exec', 'keys', 'read', 'rename', 'kill', 'help')]
+    [Parameter(Position = 0)][ValidateSet('new', 'list', 'tabs', 'connect', 'exec', 'keys', 'read', 'rename', 'kill', 'help')]
     [string]$Action = 'help',
     [ValidateSet('pwsh', 'powershell', 'cmd', 'bash', 'bash-wsl', 'sh')][string]$Shell = 'pwsh',
     [string]$Name,
@@ -83,6 +83,36 @@ function Test-IsLocal([string]$sid) {
         }
     } catch { }
     return $false
+}
+
+function Format-Snippet([string]$s, [int]$max = 46) {
+    if (-not $s) { return '' }
+    $s = ($s -replace ([char]27 + '\[[0-9;?]*[A-Za-z]'), '').Trim()
+    if ($s.Length -gt $max) { $s = $s.Substring(0, $max) + '...' }
+    return $s
+}
+
+# What is this terminal doing? The last command an assistant sent it, or - when
+# the human has been driving it directly - the last thing on its screen. This is
+# what makes a tab listing describe itself instead of being a wall of names.
+function Get-SessionDoing([string]$sid) {
+    $dir = Join-Path $Root "sessions\$sid"
+    try {
+        $lp = Join-Path $dir 'assistant-cmds.log'
+        if (Test-Path $lp) {
+            $ll = Get-Content $lp -Tail 1 -ErrorAction SilentlyContinue
+            if ($ll) { return (Format-Snippet ($ll -replace '^\S+ \S+\s+', '')) }
+        }
+    } catch { }
+    try {
+        $t = Join-Path $dir 'transcript.log'
+        if (Test-Path $t) {
+            $lines = @(Get-Content $t -Tail 15 -ErrorAction SilentlyContinue |
+                       Where-Object { $_ -and $_.Trim() })
+            if ($lines) { return '(user-driven) ' + (Format-Snippet $lines[-1] 34) }
+        }
+    } catch { }
+    return '(user-driven)'
 }
 
 # tabs.json: tab label -> access key. Mirrors AccessKeys.ClaimTab in the app so
@@ -408,18 +438,7 @@ switch ($Action) {
                 $sp = Join-Path $Root "sessions\$($_.Name)\state.json"
                 if (Test-Path $sp) { $ctrl = (Get-Content $sp -Raw | ConvertFrom-Json).controller }
             } catch { }
-            # what is this terminal doing? last command the assistant sent, else
-            # "(user)" when the human has been driving it directly.
-            $last = ''
-            try {
-                $lp = Join-Path $Root "sessions\$($_.Name)\assistant-cmds.log"
-                if (Test-Path $lp) {
-                    $ll = (Get-Content $lp -Tail 1 -ErrorAction SilentlyContinue)
-                    if ($ll) { $last = ($ll -replace '^\S+ \S+\s+', '') }
-                }
-            } catch { }
-            if (-not $last) { $last = '(user-driven)' }
-            if ($last.Length -gt 44) { $last = $last.Substring(0, 44) + '...' }
+            $last = Get-SessionDoing $_.Name
             [pscustomobject]@{
                 Guid = $_.Name.Substring(0, 8); Name = $_.Value.name
                 Shell = $_.Value.shell; Status = $status
@@ -439,6 +458,83 @@ switch ($Action) {
             if ($lockedCount -gt 0) {
                 Write-Output "($lockedCount more terminal(s) belong to other conversations - locked, not shown.)"
             }
+        }
+    }
+
+    'tabs' {
+        # Describe the tabs by NAME and say what is inside each one. This is the
+        # "where am I and what is here" view: tab labels, the terminals in them
+        # and what each was last doing. No access keys are printed - it is an
+        # orientation tool, not a way to obtain credentials - and tabs the
+        # supplied key does not open are counted, never named, exactly as `list`
+        # does.
+        $idx = Read-Index
+        $tabsFile = Join-Path $Root 'tabs.json'
+        $meta = $null
+        if (Test-Path $tabsFile) { try { $meta = Get-Content $tabsFile -Raw | ConvertFrom-Json } catch { } }
+
+        $groups = [ordered]@{}
+        $mineLabels = @()
+        $locked = 0
+        foreach ($p in $idx.PSObject.Properties) {
+            $sid = $p.Name
+            $isLocal = Test-IsLocal $sid
+            $isMine = (-not $isLocal) -and (Test-KeyMatch $sid $Key)
+            if (-not ($isLocal -or $isMine)) { $locked++; continue }
+
+            $st = $null
+            try { $st = Get-Content (Join-Path $Root "sessions\$sid\state.json") -Raw | ConvertFrom-Json } catch { }
+            $label = if ($isLocal) { 'Local' } elseif ($st.tabLabel) { $st.tabLabel } else { 'Local' }
+            if ($isMine -and $mineLabels -notcontains $label) { $mineLabels += $label }
+
+            $status = $p.Value.status
+            if ($status -eq 'running' -and $p.Value.windowPid) {
+                if (-not (Get-Process -Id $p.Value.windowPid -ErrorAction SilentlyContinue)) { $status = 'closed' }
+            }
+            if (-not $groups[$label]) { $groups[$label] = @() }
+            $groups[$label] += [pscustomobject]@{
+                Sid = $sid.Substring(0, 8); Name = $p.Value.name; Shell = $p.Value.shell
+                Status = $status; Driver = $st.controller
+                Doing = Get-SessionDoing $sid
+            }
+        }
+
+        # your own tab(s) first, then Local - the order you care about
+        $order = @($mineLabels) + @($groups.Keys | Where-Object { $mineLabels -notcontains $_ })
+        if (-not $order) {
+            Write-Output '(no tabs you can see. Run `new` to get your own, or ask the user for a tab''s access key.)'
+            if ($locked -gt 0) { Write-Output "($locked terminal(s) belong to conversations your key does not open.)" }
+            return
+        }
+        Write-Output 'TABS YOU CAN SEE - by name, and what is in each one.'
+        foreach ($label in $order) {
+            $rows = @($groups[$label])
+            $live = @($rows | Where-Object { $_.Status -eq 'running' })
+            $gone = $rows.Count - $live.Count
+            Write-Output ''
+            if ($label -eq 'Local') {
+                Write-Output '  "Local"  - the user''s own terminals. Unclaimed: no key exists for them.'
+                Write-Output '             Take one over with -Controller and it moves into your tab.'
+            } else {
+                $tag = if ($mineLabels -contains $label) { 'your tab - the key you supplied opens it' }
+                       else { 'visible to you' }
+                Write-Output ("  `"$label`"  - $tag")
+                $guests = @()
+                try { $guests = @(@($meta.PSObject.Properties[$label].Value.guests) | Where-Object { $_ }) } catch { }
+                if ($guests.Count) {
+                    Write-Output ("      SHARED - also being worked by: " + ($guests -join ', '))
+                }
+            }
+            if (-not $live.Count) { Write-Output '      (no live terminals)' }
+            foreach ($r in $live) {
+                $who = if ($r.Driver -and $r.Driver -ne $label) { " [driven by $($r.Driver)]" } else { '' }
+                Write-Output ("      {0,-16} {1,-9} {2}{3}" -f $r.Name, $r.Shell, $r.Doing, $who)
+            }
+            if ($gone -gt 0) { Write-Output "      (+$gone closed - transcripts kept in History)" }
+        }
+        if ($locked -gt 0) {
+            Write-Output ''
+            Write-Output "  $locked terminal(s) belong to conversations your key does not open - not listed."
         }
     }
 
@@ -625,6 +721,7 @@ MCPTerminal - shared live terminals for you + an AI assistant
   mcpterm new    [-Shell pwsh|powershell|cmd|bash|bash-wsl] [-Name x]
                  [-Cwd dir] [-WslDistro d] [-Key <key>] [-Hidden]
   mcpterm list   [-Key <key>]
+  mcpterm tabs   [-Key <key>]   (tab NAMES + what is in each one; no keys shown)
   mcpterm connect -Id <code> -Key <key> [-Controller "<chat>"]   (announce + status)
   mcpterm exec   -Id <code> -Key <key> -Command "<cmd>" [-Controller "<chat>"] [-TimeoutSec n]
   mcpterm keys   -Id <code> -Key <key> -Keys "Y{ENTER}"   (raw keys: prompts, TUI apps)
@@ -637,6 +734,12 @@ Reading or driving a terminal requires its key (-Key); `new` without a key mints
 a fresh tab and prints the key it created. The key is shown in the terminal
 window's own header and by running `info` inside it, so the person at the
 keyboard decides who gets in. Terminals you hold no key for are not listed.
+
+SHARING A TAB: a tab can be worked by two conversations at once. The user shares
+it from Studio (the tab's share icon), which hands the second chat the same key.
+Holding a tab's key puts you IN that tab whatever you call yourself, so both
+chats see and drive the same terminals. Read before you type - someone else is
+in there. `tabs` shows which chats are sharing a tab.
 
 LOCAL IS PRIVATE: terminals in the "Local" tab are the user's own. They are
 never issued a key, cannot be listed, read, typed into or killed by an

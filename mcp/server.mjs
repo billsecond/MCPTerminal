@@ -50,6 +50,22 @@ const TOOLS = [
     },
   },
   {
+    name: 'terminal_tabs',
+    description:
+      'Describe the TABS by NAME and say what is inside each one - the terminals in it, ' +
+      'what each was last doing, and which chats are sharing it. Use this to orient yourself: ' +
+      'it answers "which tab am I in and what is in it" in words, without session codes or ' +
+      'access keys. Call it when the user talks about a tab by name, when you are unsure which ' +
+      'terminal to use, or after being invited into a shared tab. Tabs your key does not open ' +
+      'are counted, never named.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Your tab\'s access key. Without it only the user\'s unclaimed Local terminals are described.' },
+      },
+    },
+  },
+  {
     name: 'terminal_connect',
     description:
       'Connect to a session by its code: announces the connection by running the info command (shows CONNECTED + which chat). Use this FIRST when the user shares a session code. ' +
@@ -161,6 +177,8 @@ async function callTool(name, args = {}) {
     }
     case 'terminal_list':
       return runCli(args.key ? ['list', '-Key', args.key] : ['list']);
+    case 'terminal_tabs':
+      return runCli(args.key ? ['tabs', '-Key', args.key] : ['tabs']);
     case 'terminal_connect': {
       const a = ['connect', '-Id', args.id, '-Key', args.key ?? ''];
       if (args.controller) a.push('-Controller', args.controller);
@@ -246,6 +264,22 @@ async function handleLine(line) {
           '  a session code      -> one terminal within it (e.g. ps-1, smug-hen-1)',
           'A terminal can move between tabs (see LOCAL below), and the user can add',
           'terminals to your tab at any time - those are yours to use immediately.',
+          'terminal_tabs describes the tabs you can see BY NAME and what is in each',
+          'one - call it whenever the user names a tab, or you are unsure which',
+          'terminal to use.',
+          '',
+          'A TAB CAN BE SHARED BY TWO CHATS. The user can hand another conversation',
+          'your tab\'s access key (Studio\'s share icon on the tab). Holding a tab\'s',
+          'key puts you IN that tab whatever you call yourself, so both chats list,',
+          'read and drive the SAME terminals, and Studio keeps them under the one',
+          'tab. If you are sharing:',
+          '  - terminal_read BEFORE you type. The other chat may be mid-command, and',
+          '    a terminal is one shell - two commands at once interleave badly.',
+          '  - terminal_tabs names the chats sharing a tab. terminal_list may show',
+          '    terminals you did not create; they are the other chat\'s work, and you',
+          '    may use them, but say so rather than silently taking one over.',
+          '  - Keep passing YOUR OWN controller id. It is how the user tells which',
+          '    chat ran what; it does not move the terminal out of the shared tab.',
           '',
           'IDENTIFY YOURSELF - do this once, before any other terminal call:',
           'compose a controller id of the form "<chat title> - <4 hex chars you',
