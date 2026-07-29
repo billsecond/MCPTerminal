@@ -49,10 +49,18 @@
   #liveLight.live { background: #22c55e; box-shadow: 0 0 9px #22c55e, 0 0 18px rgba(34,197,94,.8);
     animation: pulse 1.1s ease-in-out infinite; }
 
-  .tab .tx { visibility: hidden; color: var(--dim); flex: none; padding: 0 1px;
+  /* The tab's ✕ and share icons are ALWAYS on screen. Revealing them on :hover
+     meant that any re-render - a status tick, a terminal changing tab - replaced
+     the element under the pointer with one the browser did not yet consider
+     hovered, so the icon vanished mid-click and the click landed on nothing.
+     That is why closing something used to take several tries. */
+  .tab .tx, .tab .tshare { color: #55555e; flex: none; padding: 0 1px;
     font-size: 11px; }
-  .tab:hover .tx { visibility: visible; }
+  .tab:hover .tx, .tab:hover .tshare { color: var(--dim); }
   .tab .tx:hover { color: #f87171; }
+  .tab .tshare { font-size: 12px; }
+  .tab .tshare:hover { color: var(--accent); }
+  .tab .tshared { color: var(--accent); font-size: 10px; flex: none; }
 
   /* ---- confirm dialog ---- */
   #confirmWrap { display: none; position: fixed; inset: 0; z-index: 90;
@@ -119,8 +127,9 @@
   .trow .unread.has { background: var(--accent); box-shadow: 0 0 5px var(--accent); }
   .trow .sh { font-size: 10px; color: var(--dim); background: var(--bg);
     border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; flex: none; }
-  .trow .x { visibility: hidden; color: var(--dim); flex: none; padding: 0 3px; }
-  .trow:hover .x { visibility: visible; }
+  /* always visible, for the same reason as the tab's ✕ above */
+  .trow .x { color: #55555e; flex: none; padding: 0 3px; }
+  .trow:hover .x { color: var(--dim); }
   .trow .x:hover { color: #f87171; }
   /* on screen in a split, but not the pane you are typing into */
   .trow.shown { background: var(--bg3); }
@@ -140,31 +149,25 @@
   .pstrip .phStatus { font-size: 11px; }
 
   /* ---- layout picker + zone map (sidebar) ---- */
-  #layoutBtns { display: flex; gap: 4px; }
+  /* The picker has its own wrapping row: there are enough layouts now that they
+     no longer fit beside the LAYOUT heading. */
+  #layoutBtns { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 12px 10px; }
   .lbtn { background: var(--bg3); border: 1px solid var(--line); border-radius: 5px;
     padding: 5px; cursor: pointer; line-height: 0; }
   .lbtn:hover { border-color: var(--accent); }
   .lbtn.on { border-color: var(--accent); background: var(--bg2); }
-  /* each glyph is a miniature of the layout it selects */
+  /* each glyph is a miniature of the layout it selects, built from the same
+     zone table the real grid uses */
   .glyph { display: grid; width: 22px; height: 16px; gap: 2px; }
   .glyph i { background: var(--dim); border-radius: 1px; display: block; }
   .lbtn.on .glyph i { background: var(--accent); }
-  .glyph.single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-  .glyph.single i:nth-child(n+2) { display: none; }
-  .glyph.lr { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
-  .glyph.lr i:nth-child(n+3) { display: none; }
-  .glyph.tb { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-  .glyph.tb i:nth-child(n+3) { display: none; }
-  .glyph.quad { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 
   .zonemap { display: grid; gap: 4px; margin: 0 12px 10px; }
   .zonemap.soloing .zbox { opacity: .55; }
-  .sololine { grid-column: 1 / -1; color: var(--accent); font-size: 10px;
+  .sololine { grid-column: 1 / -1; grid-row: 1; color: var(--accent); font-size: 10px;
     padding: 1px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .zonemap.single { grid-template-columns: 1fr; }
-  .zonemap.lr { grid-template-columns: 1fr 1fr; }
-  .zonemap.tb { grid-template-columns: 1fr; }
-  .zonemap.quad { grid-template-columns: 1fr 1fr; }
+  #layoutName { letter-spacing: 0; color: var(--dim); max-width: 62%;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .zbox { border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px;
     min-height: 42px; display: flex; flex-direction: column; gap: 2px;
     background: var(--bg); cursor: pointer; overflow: hidden; }
@@ -269,8 +272,9 @@
   <div id="tabs"></div>
   <div id="main">
     <div id="side">
-      <div class="head"><span>LAYOUT</span><span id="layoutBtns"></span></div>
-      <div id="zonemap" class="zonemap single"></div>
+      <div class="head"><span>LAYOUT</span><span id="layoutName"></span></div>
+      <div id="layoutBtns"></div>
+      <div id="zonemap" class="zonemap"></div>
       <div class="head"><span>TERMINALS</span>
         <span id="newBtns">
           <button data-shell="pwsh" class="plus" title="New terminal (PowerShell 7)">+</button>
@@ -418,8 +422,14 @@ function renderTabs() {
       };
       menu.appendChild(item);
     }
-    picker.onclick = (ev) => { ev.stopPropagation(); menu.classList.toggle('open'); };
-    document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
+    // The dismiss-on-outside-click listener is armed only while the menu is
+    // open. Registering it when the picker was BUILT ate the next click
+    // anywhere in the app, whether or not the menu had ever been opened.
+    picker.onclick = (ev) => {
+      ev.stopPropagation();
+      const open = menu.classList.toggle('open');
+      if (open) document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
+    };
     const wrap = document.createElement('div');
     wrap.className = 'tabwrap';
     wrap.appendChild(picker);
@@ -494,16 +504,26 @@ document.addEventListener('keydown', ev => {
 });
 
 // Closing a conversation tab closes the terminals in it. Each live terminal is
-// confirmed, but "apply to the rest" collapses that to a single question.
+// confirmed, but "apply to the rest" collapses that to a single question - and
+// the tab itself goes as soon as you say yes, rather than lingering as a row of
+// tombstones that needed a second ✕ to clear.
 async function closeConv(c) {
   const own = [...terms.values()].filter(t => convOf(t) === c);
   const liveOnes = own.filter(t => !t.closed);
-  if (!liveOnes.length) {                       // only tombstones - just clear them
-    for (const t of own) { t.term.dispose(); t.el.remove(); terms.delete(t.id); }
-    if (!terms.has(activeTerm)) activeTerm = null;
+  // Close these and drop the tab if nothing is left in it.
+  const drop = list => {
+    for (const t of list) { if (!t.closed) send({ type: 'closeTerm', id: t.id }); forgetTerm(t); }
+    if (![...terms.values()].some(t => convOf(t) === c)) {
+      layouts.delete(c);
+      if (activeConv === c) activeConv = 'Local';
+    }
     renderAll();
-    return;
-  }
+  };
+  if (!liveOnes.length) { drop(own); return; }   // only tombstones - just clear them
+  // The button says what it does. It used to say "Close 4 terminals" and then
+  // ask about each of the four anyway unless you had ticked a box first, which
+  // is a fair part of why closing anything felt like it took several clicks.
+  // Now one yes closes the tab; walking them one by one is what you opt IN to.
   const first = await confirmBox({
     title: `Close "${c}"?`,
     text: liveOnes.length === 1
@@ -511,13 +531,10 @@ async function closeConv(c) {
       : `This ends ${liveOnes.length} terminals in this tab. Their transcripts are kept in History.`,
     yes: liveOnes.length === 1 ? 'Close terminal' : `Close ${liveOnes.length} terminals`,
     showAll: liveOnes.length > 1,
-    allText: 'Do the same for every terminal in this tab (do not ask again)',
+    allText: 'Ask me about each terminal instead',
   });
   if (!first.ok) return;
-  if (first.all || liveOnes.length === 1) {
-    for (const t of liveOnes) send({ type: 'closeTerm', id: t.id });
-    return;
-  }
+  if (!first.all || liveOnes.length === 1) { drop(own); return; }
   // asked per terminal, with the option to stop asking part-way through
   for (let i = 0; i < liveOnes.length; i++) {
     const t = liveOnes[i];
@@ -529,52 +546,89 @@ async function closeConv(c) {
       showAll: left > 1,
       allText: `Do the same for the remaining ${left - 1}`,
     });
-    if (r.ok) send({ type: 'closeTerm', id: t.id });
+    if (r.ok) drop([t]);
     if (r.all) {
-      if (r.ok) for (const rest of liveOnes.slice(i + 1)) send({ type: 'closeTerm', id: rest.id });
-      return;
+      if (r.ok) drop(liveOnes.slice(i + 1));
+      break;
     }
   }
+  // whatever the answers, the tombstones in this tab were already on their way out
+  drop([...terms.values()].filter(t => convOf(t) === c && t.closed));
+}
+
+// Take a terminal out of the UI entirely: its pane, its row, its zone.
+function forgetTerm(t) {
+  try { t.term.dispose(); } catch { }
+  t.el.remove();
+  t.row?.remove();
+  terms.delete(t.id);
+  clearTerm(convOf(t), t.id);          // its zone empties out
+  if (activeTerm === t.id) activeTerm = null;
+}
+
+// ONE click ends it. A terminal you closed yourself leaves the list straight
+// away - its transcript is still in History. The italic-red tombstone row is
+// for closes you did NOT ask for (the shell exited, or an assistant closed it),
+// which are worth seeing; having your own ✕ leave one behind just meant every
+// close needed a second click to clear it.
+function dismissTerm(id) {
+  const t = terms.get(id);
+  if (!t) return;
+  if (!t.closed) send({ type: 'closeTerm', id });
+  forgetTerm(t);
+  renderAll();
+}
+
+// Rows are built once per terminal and then updated in place. Rebuilding the
+// whole list on every render threw away the element the pointer was on, which
+// cancelled the click already in progress - the other half of why the ✕ needed
+// several tries.
+function rowFor(t) {
+  if (t.row) return t.row;
+  const row = document.createElement('div');
+  row.className = 'trow';
+  row.innerHTML = '<span class="dot"></span><span class="nm"></span>' +
+    '<span class="unread"></span><span class="sh"></span><span class="x">&#10005;</span>';
+  row.querySelector('.x').title = 'Close this terminal';
+  row.querySelector('.x').onclick = ev => { ev.stopPropagation(); dismissTerm(t.id); };
+  row.draggable = true;
+  row.addEventListener('dragstart', ev => beginTermDrag(ev, t.id));
+  row.title = 'Click to show here · drag into the pane area to dock it left / right / above / below';
+  row.onclick = () => {
+    historyMode = false; showInFocusedPane(t.id); t.unseen = false; renderAll();
+    terms.get(t.id)?.term.focus();
+  };
+  row.ondblclick = () => {
+    const n = prompt('Rename terminal (name it for what it does):', t.name);
+    if (n && n.trim() && n.trim() !== t.name) send({ type: 'renameTerm', id: t.id, name: n.trim() });
+  };
+  t.row = row;
+  return row;
 }
 
 function renderList() {
-  $list.innerHTML = '';
   const onScreen = visibleIds();   // terminals on screen right now
   const visible = [...terms.values()].filter(t => convOf(t) === activeConv);
   if (activeTerm && !visible.some(t => t.id === activeTerm)) activeTerm = visible[0]?.id ?? null;
   if (!activeTerm && visible.length) activeTerm = visible[0].id;
   for (const t of visible) {
-    const row = document.createElement('div');
+    const row = rowFor(t);
     row.className = 'trow' + (t.id === activeTerm ? ' active' : '')
       + (t.id !== activeTerm && onScreen.has(t.id) ? ' shown' : '')
       + (t.closed ? ' closed' : '')
       + (!t.closed && t.activeAgo >= 0 && t.activeAgo < 3 ? ' activity' : '')
       + (!t.closed && t.controlAgo >= 0 && t.controlAgo < 120 ? ' controlled' : '');
-    row.innerHTML = `<span class="dot"></span><span class="nm">${t.name}</span>` +
-      `<span class="unread${t.unseen ? ' has' : ''}"></span>` +
-      `<span class="sh">${t.shell}</span><span class="x">&#10005;</span>`;
-    row.querySelector('.x').onclick = ev => {
-      ev.stopPropagation();
-      if (t.closed) {   // dismiss the tombstone locally
-        t.term.dispose(); t.el.remove(); terms.delete(t.id);
-        clearTerm(convOf(t), t.id);      // its zone empties out
-        if (activeTerm === t.id) activeTerm = null;
-        renderAll();
-      } else send({ type: 'closeTerm', id: t.id });
-    };
-    row.draggable = true;
-    row.addEventListener('dragstart', ev => beginTermDrag(ev, t.id));
-    row.title = 'Click to show here · drag into the pane area to dock it left / right / above / below';
-    row.onclick = () => {
-      historyMode = false; showInFocusedPane(t.id); t.unseen = false; renderAll();
-      terms.get(t.id)?.term.focus();
-    };
-    row.ondblclick = () => {
-      const n = prompt('Rename terminal (name it for what it does):', t.name);
-      if (n && n.trim() && n.trim() !== t.name) send({ type: 'renameTerm', id: t.id, name: n.trim() });
-    };
-    t.row = row;
-    $list.appendChild(row);
+    row.querySelector('.nm').textContent = t.name;
+    row.querySelector('.sh').textContent = t.shell;
+    row.querySelector('.unread').classList.toggle('has', !!t.unseen);
+  }
+  // Only touch the DOM when the set or the order actually changed - moving a
+  // node re-parents it and drops its :hover state.
+  const want = visible.map(t => t.row);
+  const have = [...$list.children];
+  if (want.length !== have.length || want.some((el, i) => el !== have[i])) {
+    for (const el of have) if (!want.includes(el)) el.remove();
+    want.forEach(el => $list.appendChild(el));
   }
 }
 
@@ -622,26 +676,53 @@ function updatePaneHead() { for (const t of terms.values()) updatePaneHeader(t);
 
 // ============================================================== the pane grid
 // Each conversation picks a LAYOUT from a fixed set and its terminals sit in
-// numbered ZONES:
+// numbered ZONES. A layout is described ONCE, as a table of zones on a small
+// track grid - [colFrom, colTo, rowFrom, rowTo] in track indices - and
+// everything else is derived from it: the pane rectangles, the dividers between
+// them, the sidebar zone map and the picker glyphs. Adding a layout is one line.
 //
-//   single   [1]        lr  [1|2]      tb  [1]      quad  [1|2]
-//                                          [2]            [3|4]
+//   lr [1|2]   triL [1|2]   triT [ 1 ]   col3 [1|2|3]   six [1|2|3]
+//                   [1|3]        [2|3]                      [4|5|6]
 //
-//   { mode:'single'|'lr'|'tb'|'quad', slots:[id|null,...], fx, fy, focus }
+//   { mode, slots:[id|null,...], fx:[...], fy:[...], focus, solo }
 //
 // Zones auto-populate: pick a layout and the conversation's terminals drop into
 // the empty zones in order. Drag a terminal onto a zone - in the pane area or on
 // the little zone map in the sidebar - to place it there; dragging onto an
-// occupied zone swaps the two. fx/fy are the divider positions.
+// occupied zone swaps the two. fx/fy hold the divider positions as fractions.
 const LAYOUTS = {
-  single: { zones: 1, label: 'One terminal' },
-  lr:     { zones: 2, label: 'Two side by side' },
-  tb:     { zones: 2, label: 'Two stacked' },
-  quad:   { zones: 4, label: 'Four quarters' },
+  single: { label: 'One terminal', cols: 1, rows: 1, zones: [[0,1,0,1]] },
+  lr:     { label: 'Two side by side', cols: 2, rows: 1, zones: [[0,1,0,1],[1,2,0,1]] },
+  tb:     { label: 'Two stacked', cols: 1, rows: 2, zones: [[0,1,0,1],[0,1,1,2]] },
+  triL:   { label: 'Big left, two stacked right', cols: 2, rows: 2,
+            zones: [[0,1,0,2],[1,2,0,1],[1,2,1,2]] },
+  triR:   { label: 'Two stacked left, big right', cols: 2, rows: 2,
+            zones: [[0,1,0,1],[0,1,1,2],[1,2,0,2]] },
+  triT:   { label: 'Wide top, two below', cols: 2, rows: 2,
+            zones: [[0,2,0,1],[0,1,1,2],[1,2,1,2]] },
+  triB:   { label: 'Two on top, wide below', cols: 2, rows: 2,
+            zones: [[0,1,0,1],[1,2,0,1],[0,2,1,2]] },
+  quad:   { label: 'Four quarters', cols: 2, rows: 2,
+            zones: [[0,1,0,1],[1,2,0,1],[0,1,1,2],[1,2,1,2]] },
+  col3:   { label: 'Three columns', cols: 3, rows: 1,
+            zones: [[0,1,0,1],[1,2,0,1],[2,3,0,1]] },
+  row3:   { label: 'Three rows', cols: 1, rows: 3,
+            zones: [[0,1,0,1],[0,1,1,2],[0,1,2,3]] },
+  col3b:  { label: 'Three columns, right one split', cols: 3, rows: 2,
+            zones: [[0,1,0,2],[1,2,0,2],[2,3,0,1],[2,3,1,2]] },
+  five:   { label: 'Wide top, four below', cols: 4, rows: 2,
+            zones: [[0,4,0,1],[0,1,1,2],[1,2,1,2],[2,3,1,2],[3,4,1,2]] },
+  six:    { label: 'Six panes', cols: 3, rows: 2,
+            zones: [[0,1,0,1],[1,2,0,1],[2,3,0,1],[0,1,1,2],[1,2,1,2],[2,3,1,2]] },
 };
 const layouts = new Map();          // conversation label -> layout state
 const GAP = 6, EDGE = 8;            // px between panes, and around the whole area
 let paneRects = [];                 // last computed geometry, used for hit-testing
+
+// Evenly spaced divider positions for n tracks: n-1 fractions of the whole.
+function evenSplit(n) {
+  return Array.from({ length: n - 1 }, (_, i) => (i + 1) / n);
+}
 
 // `solo` holds a terminal that is NOT in any zone but is being shown on its own
 // across the whole area - clicking an unplaced terminal in the list gives you
@@ -649,7 +730,10 @@ let paneRects = [];                 // last computed geometry, used for hit-test
 // in a zone, or going back to a zone, drops the solo view.
 function layoutOf(conv) {
   let L = layouts.get(conv);
-  if (!L) { L = { mode: 'single', slots: [null], fx: .5, fy: .5, focus: 0, solo: null }; layouts.set(conv, L); }
+  if (!L) {
+    L = { mode: 'single', slots: [null], fx: [], fy: [], focus: 0, solo: null };
+    layouts.set(conv, L);
+  }
   return L;
 }
 // The solo terminal, but only while it is real and still unplaced.
@@ -660,7 +744,8 @@ function soloOf(conv) {
   if (!t || convOf(t) !== conv || L.slots.includes(L.solo)) { L.solo = null; return null; }
   return L.solo;
 }
-function zoneCount(L) { return LAYOUTS[L.mode].zones; }
+function specOf(L) { return LAYOUTS[L.mode] ?? LAYOUTS.single; }
+function zoneCount(L) { return specOf(L).zones.length; }
 
 // Terminals belonging to this conversation, in sidebar order.
 function convTerms(conv) { return [...terms.values()].filter(t => convOf(t) === conv); }
@@ -670,7 +755,12 @@ function setMode(conv, mode) {
   const keep = L.slots.filter(Boolean);          // preserve what was on screen
   L.solo = null;                                 // picking a layout means show it
   L.mode = mode;
+  const spec = specOf(L);
   L.slots = Array.from({ length: zoneCount(L) }, (_, i) => keep[i] ?? null);
+  // Keep the dividers you dragged only if the new layout has the same number of
+  // tracks on that axis; otherwise they mean nothing and go back to even.
+  if (L.fx.length !== spec.cols - 1) L.fx = evenSplit(spec.cols);
+  if (L.fy.length !== spec.rows - 1) L.fy = evenSplit(spec.rows);
   if (L.focus >= L.slots.length) L.focus = 0;
   fillZones(conv);
 }
@@ -708,31 +798,63 @@ function clearTerm(conv, id) {
   if (i >= 0) L.slots[i] = null;
 }
 
+// Track offsets/sizes along one axis: n tracks separated by GAP, split at the
+// given fractions of the usable length.
+function tracksOf(origin, total, n, pos) {
+  const usable = Math.max(0, total - GAP * (n - 1));
+  const edges = [0, ...pos, 1];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.round(edges[i] * usable) + GAP * i;
+    const b = Math.round(edges[i + 1] * usable) + GAP * i;
+    out.push({ off: origin + a, size: Math.max(0, b - a) });
+  }
+  return out;
+}
+
 // Zone rectangles for the current layout, plus the dividers between them.
+//
+// A divider only exists where it is a real edge: in "wide top, two below" the
+// vertical divider runs through the bottom row only, because the top zone
+// spans across it. So each boundary is walked track by track and the runs that
+// no zone straddles become sashes.
 function computeRects(L, x, y, w, h) {
-  const panes = [], sashes = [];
-  const px = (n, f) => Math.round(n * f);
-  if (L.mode === 'single') {
-    panes.push({ zone: 0, x, y, w, h });
-  } else if (L.mode === 'lr') {
-    const wl = px(w - GAP, L.fx);
-    panes.push({ zone: 0, x, y, w: wl, h });
-    panes.push({ zone: 1, x: x + wl + GAP, y, w: w - wl - GAP, h });
-    sashes.push({ x: x + wl, y, w: GAP, h, dir: 'row', axis: 'fx' });
-  } else if (L.mode === 'tb') {
-    const ht = px(h - GAP, L.fy);
-    panes.push({ zone: 0, x, y, w, h: ht });
-    panes.push({ zone: 1, x, y: y + ht + GAP, w, h: h - ht - GAP });
-    sashes.push({ x, y: y + ht, w, h: GAP, dir: 'col', axis: 'fy' });
-  } else {
-    const wl = px(w - GAP, L.fx), ht = px(h - GAP, L.fy);
-    const wr = w - wl - GAP, hb = h - ht - GAP;
-    panes.push({ zone: 0, x, y, w: wl, h: ht });
-    panes.push({ zone: 1, x: x + wl + GAP, y, w: wr, h: ht });
-    panes.push({ zone: 2, x, y: y + ht + GAP, w: wl, h: hb });
-    panes.push({ zone: 3, x: x + wl + GAP, y: y + ht + GAP, w: wr, h: hb });
-    sashes.push({ x: x + wl, y, w: GAP, h, dir: 'row', axis: 'fx' });
-    sashes.push({ x, y: y + ht, w, h: GAP, dir: 'col', axis: 'fy' });
+  const spec = specOf(L);
+  const cx = tracksOf(x, w, spec.cols, L.fx.length === spec.cols - 1 ? L.fx : evenSplit(spec.cols));
+  const cy = tracksOf(y, h, spec.rows, L.fy.length === spec.rows - 1 ? L.fy : evenSplit(spec.rows));
+  const span = (tr, a, b) => ({ off: tr[a].off, size: tr[b - 1].off + tr[b - 1].size - tr[a].off });
+
+  const panes = spec.zones.map(([c0, c1, r0, r1], zone) => {
+    const sx = span(cx, c0, c1), sy = span(cy, r0, r1);
+    return { zone, x: sx.off, y: sy.off, w: sx.size, h: sy.size };
+  });
+
+  const sashes = [];
+  const runs = (n, blocked, make) => {          // contiguous unblocked stretches
+    let from = -1;
+    for (let i = 0; i <= n; i++) {
+      const bad = i === n || blocked(i);
+      if (!bad && from < 0) from = i;
+      if (bad && from >= 0) { make(from, i); from = -1; }
+    }
+  };
+  for (let b = 1; b < spec.cols; b++) {
+    runs(spec.rows,
+      r => spec.zones.some(([c0, c1, r0, r1]) => c0 < b && c1 > b && r0 <= r && r1 > r),
+      (r0, r1) => {
+        const sy = span(cy, r0, r1);
+        sashes.push({ x: cx[b - 1].off + cx[b - 1].size, y: sy.off, w: GAP, h: sy.size,
+                      dir: 'row', axis: 'fx', i: b - 1 });
+      });
+  }
+  for (let b = 1; b < spec.rows; b++) {
+    runs(spec.cols,
+      c => spec.zones.some(([c0, c1, r0, r1]) => r0 < b && r1 > b && c0 <= c && c1 > c),
+      (c0, c1) => {
+        const sx = span(cx, c0, c1);
+        sashes.push({ x: sx.off, y: cy[b - 1].off + cy[b - 1].size, w: sx.size, h: GAP,
+                      dir: 'col', axis: 'fy', i: b - 1 });
+      });
   }
   return { panes, sashes };
 }
@@ -741,6 +863,11 @@ function computeRects(L, x, y, w, h) {
 // conversation, then top up any empty zones.
 function ensureLayout() {
   const L = layoutOf(activeConv);
+  const spec = specOf(L);
+  if (L.fx.length !== spec.cols - 1) L.fx = evenSplit(spec.cols);
+  if (L.fy.length !== spec.rows - 1) L.fy = evenSplit(spec.rows);
+  if (L.slots.length !== spec.zones.length)
+    L.slots = Array.from({ length: spec.zones.length }, (_, i) => L.slots[i] ?? null);
   for (let i = 0; i < L.slots.length; i++) {
     const t = L.slots[i] && terms.get(L.slots[i]);
     if (!t || convOf(t) !== activeConv) L.slots[i] = null;
@@ -919,16 +1046,22 @@ function startSash(ev, el) {
   el.classList.add('dragging');
   document.body.style.cursor = s.dir === 'row' ? 'col-resize' : 'row-resize';
   const L = layoutOf(activeConv);
+  const spec = specOf(L);
   const horiz = s.dir === 'row';
-  const total = (horiz ? box.width : box.height) - EDGE * 2 - GAP;
+  const n = horiz ? spec.cols : spec.rows;
+  const total = (horiz ? box.width : box.height) - EDGE * 2 - GAP * (n - 1);
   const start = horiz ? ev.clientX : ev.clientY;
-  const from = L[s.axis];
+  const pos = L[s.axis];
+  const from = pos[s.i];
+  const MIN = .08;                       // never squeeze a track to nothing
+  const lo = (s.i > 0 ? pos[s.i - 1] : 0) + MIN;
+  const hi = (s.i + 1 < pos.length ? pos[s.i + 1] : 1) - MIN;
   let pending = start, raf = 0;
 
   const apply = () => {
     raf = 0;
     const d = (pending - start) / total;
-    L[s.axis] = Math.min(.9, Math.max(.1, from + d));   // never squeeze to nothing
+    pos[s.i] = Math.min(hi, Math.max(lo, from + d));
     applyLayout(true);                                  // geometry only while dragging
   };
   // Coalesce to one update per frame. Pointer events fire far faster than the
@@ -1002,6 +1135,22 @@ $drop.addEventListener('drop', ev => {
 });
 
 // ---- the layout picker and zone map in the sidebar
+// The glyph on each button is the layout's own zone table drawn small, so the
+// button and the thing it selects can never drift apart.
+function glyphFor(spec) {
+  const g = document.createElement('span');
+  g.className = 'glyph';
+  g.style.gridTemplateColumns = `repeat(${spec.cols}, 1fr)`;
+  g.style.gridTemplateRows = `repeat(${spec.rows}, 1fr)`;
+  for (const [c0, c1, r0, r1] of spec.zones) {
+    const i = document.createElement('i');
+    i.style.gridColumn = `${c0 + 1} / ${c1 + 1}`;
+    i.style.gridRow = `${r0 + 1} / ${r1 + 1}`;
+    g.appendChild(i);
+  }
+  return g;
+}
+
 function renderLayoutPicker() {
   const host = document.getElementById('layoutBtns');
   if (!host) return;
@@ -1010,11 +1159,13 @@ function renderLayoutPicker() {
   for (const [mode, def] of Object.entries(LAYOUTS)) {
     const b = document.createElement('button');
     b.className = 'lbtn' + (L.mode === mode ? ' on' : '');
-    b.title = def.label;
-    b.innerHTML = `<span class="glyph ${mode}"><i></i><i></i><i></i><i></i></span>`;
+    b.title = `${def.label} (${def.zones.length} zone${def.zones.length > 1 ? 's' : ''})`;
+    b.appendChild(glyphFor(def));
     b.onclick = () => { layoutOf(activeConv).solo = null; setMode(activeConv, mode); renderAll(); };
     host.appendChild(b);
   }
+  const nm = document.getElementById('layoutName');
+  if (nm) nm.textContent = specOf(L).label;
 }
 
 // A small live map of the layout: one box per zone, showing what is in it and
@@ -1023,8 +1174,10 @@ function renderZoneMap() {
   const host = document.getElementById('zonemap');
   if (!host) return;
   const L = layoutOf(activeConv);
+  const spec = specOf(L);
   const solo = soloOf(activeConv);
   host.className = 'zonemap ' + L.mode + (dragId ? ' dropping' : '') + (solo ? ' soloing' : '');
+  host.style.gridTemplateColumns = `repeat(${spec.cols}, 1fr)`;
   host.innerHTML = '';
   if (solo) {
     const bar = document.createElement('div');
@@ -1035,6 +1188,11 @@ function renderZoneMap() {
   for (let z = 0; z < zoneCount(L); z++) {
     const box = document.createElement('div');
     box.className = 'zbox' + (z === L.focus && !solo ? ' focus' : '') + (L.slots[z] ? '' : ' empty');
+    // the map is the layout in miniature: each zone keeps its real shape
+    const [c0, c1, r0, r1] = spec.zones[z];
+    const rOff = solo ? 1 : 0;                    // the solo line takes row 1
+    box.style.gridColumn = `${c0 + 1} / ${c1 + 1}`;
+    box.style.gridRow = `${r0 + 1 + rOff} / ${r1 + 1 + rOff}`;
     const t = L.slots[z] && terms.get(L.slots[z]);
     box.innerHTML = `<span class="zn">${z + 1}</span><span class="zt"></span>`;
     box.querySelector('.zt').textContent = t ? t.name : 'empty';
@@ -1106,7 +1264,8 @@ function addTerm(m) {
   // focus only - no relayout, or the grid rebuilds under the pointer and the
   // drag never gets off the ground
   strip.addEventListener('mousedown', () => setFocusPane(m.id, false));
-  strip.querySelector('.x').onclick = ev => { ev.stopPropagation(); send({ type: 'closeTerm', id: m.id }); };
+  strip.querySelector('.x').title = 'Close this terminal';
+  strip.querySelector('.x').onclick = ev => { ev.stopPropagation(); dismissTerm(m.id); };
   const body = document.createElement('div');
   body.className = 'pbody';
   el.append(strip, body);
