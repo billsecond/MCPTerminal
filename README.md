@@ -446,6 +446,13 @@ at the start of a conversation.
 Config and MCP servers load at session start — **restart your assistant** (or
 open a new chat) after installing.
 
+**Updating does not ask you any of this again.** Your answers — including the
+disclaimer — are recorded at install time and replayed on every later run, so an
+update just updates. A question added by a newer version has no remembered
+answer, so that one is still asked rather than being decided for you. To go
+through the setup again: `install.ps1 -Reconfigure` (`./install.sh
+--reconfigure`). Uninstalling forgets the answers.
+
 ---
 
 ## MCP server

@@ -718,6 +718,17 @@ function dismissTerm(id) {
 // whole list on every render threw away the element the pointer was on, which
 // cancelled the click already in progress - the other half of why the ✕ needed
 // several tries.
+// The last two rows clicked. A double-click only means "rename" when BOTH of
+// its clicks landed on the SAME row: closing a terminal shifts the list up, so
+// the next row slides under a pointer that has not moved, and two closes in a
+// row were being read as a double-click on whichever terminal arrived second -
+// which popped up a rename box for a terminal you never meant to touch.
+const clickTrail = [null, null];
+$list.addEventListener('click', ev => {
+  clickTrail[0] = clickTrail[1];
+  clickTrail[1] = ev.target.closest?.('.trow') ?? null;
+}, true);
+
 function rowFor(t) {
   if (t.row) return t.row;
   const row = document.createElement('div');
@@ -726,6 +737,8 @@ function rowFor(t) {
     '<span class="unread"></span><span class="sh"></span><span class="x">&#10005;</span>';
   row.querySelector('.x').title = 'Close this terminal';
   row.querySelector('.x').onclick = ev => { ev.stopPropagation(); dismissTerm(t.id); };
+  // the ✕ is never a rename, however fast you click it
+  row.querySelector('.x').ondblclick = ev => { ev.stopPropagation(); };
   row.draggable = true;
   row.addEventListener('dragstart', ev => beginTermDrag(ev, t.id));
   row.title = 'Click to show here · drag into the pane area to dock it left / right / above / below';
@@ -733,7 +746,9 @@ function rowFor(t) {
     historyMode = false; showInFocusedPane(t.id); t.unseen = false; renderAll();
     terms.get(t.id)?.term.focus();
   };
-  row.ondblclick = () => {
+  row.ondblclick = ev => {
+    if (ev.target.closest('.x')) return;
+    if (clickTrail[0] !== row || clickTrail[1] !== row) return;   // both clicks, same row
     const n = prompt('Rename terminal (name it for what it does):', t.name);
     if (n && n.trim() && n.trim() !== t.name) send({ type: 'renameTerm', id: t.id, name: n.trim() });
   };

@@ -1,7 +1,8 @@
 # =============================================================================
 # MCPTerminal installer (Windows)
 #
-#   pwsh -File install.ps1              interactive install
+#   pwsh -File install.ps1              install, or update using your answers
+#   pwsh -File install.ps1 -Reconfigure ask the setup questions again
 #   pwsh -File install.ps1 -Yes         accept every prompt (unattended)
 #   pwsh -File install.ps1 -Uninstall
 #
@@ -11,8 +12,11 @@
 #   * MCPTerminal Studio + its shortcut
 #   * the mcpterminal MCP server (global, for AI assistants)
 #   * assistant routing rules in ~/.claude/CLAUDE.md
+#
+# Your answers are remembered, so UPDATING re-applies the same setup silently
+# instead of interrogating you again. -Reconfigure forgets them and asks.
 # =============================================================================
-param([switch]$Uninstall, [switch]$Yes)
+param([switch]$Uninstall, [switch]$Yes, [switch]$Reconfigure)
 $ErrorActionPreference = 'Stop'
 
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\MCPTerminal'
@@ -24,13 +28,49 @@ $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbw
 $profileNames = @('MCPTerminal', 'MCPTerminal CMD', 'MCPTerminal PS5', 'MCPTerminal Git Bash', 'MCPTerminal WSL')
 $ws = New-Object -ComObject WScript.Shell
 
-function Ask([string]$question, [string]$detail) {
-    if ($Yes) { return $true }
-    Write-Host ''
-    Write-Host "  $question" -ForegroundColor Cyan
-    if ($detail) { Write-Host "  $detail" -ForegroundColor DarkGray }
-    $a = Read-Host '  [Y/n]'
-    return ($a -eq '' -or $a -match '^[Yy]')
+# ------------------------------------------------------- remembered answers
+# An UPDATE is not a fresh install and must not interrogate you again: every
+# answered question is written here and replayed next time. A question with no
+# remembered answer - a new option in a newer version - is still asked, so
+# adding a feature does not silently opt you in or out of it.
+$choiceFile = Join-Path $installDir 'install-choices.json'
+$choices = [ordered]@{}
+$isUpdate = $false
+if ((Test-Path $choiceFile) -and -not $Reconfigure) {
+    try {
+        $saved = Get-Content $choiceFile -Raw | ConvertFrom-Json
+        foreach ($p in $saved.PSObject.Properties) { $choices[$p.Name] = $p.Value }
+        $isUpdate = $choices.Count -gt 0
+    } catch { }         # unreadable - fall back to asking
+}
+
+function Save-Choices {
+    try {
+        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+        [pscustomobject]$choices | ConvertTo-Json -Depth 8 |
+            Set-Content $choiceFile -Encoding UTF8
+    } catch { }         # remembering is a convenience, never a reason to fail
+}
+
+# $key names the answer to remember. Omit it for questions about the state of
+# THIS run - "close the running app?" - which must be asked every time.
+function Ask([string]$question, [string]$detail, [string]$key) {
+    if ($key -and $choices.Contains($key)) {
+        $was = [bool]$choices[$key]
+        Write-Host ("  {0,-52} {1}" -f $question, $(if ($was) { 'yes (remembered)' } else { 'no (remembered)' })) `
+            -ForegroundColor DarkGray
+        return $was
+    }
+    if ($Yes) { $ans = $true }
+    else {
+        Write-Host ''
+        Write-Host "  $question" -ForegroundColor Cyan
+        if ($detail) { Write-Host "  $detail" -ForegroundColor DarkGray }
+        $a = Read-Host '  [Y/n]'
+        $ans = ($a -eq '' -or $a -match '^[Yy]')
+    }
+    if ($key) { $choices[$key] = $ans; Save-Choices }
+    return $ans
 }
 
 # Merge mcpServers.mcpterminal into a JSON-config MCP client (Claude Desktop,
@@ -95,7 +135,7 @@ function Ensure-Pwsh7 {
         return
     }
 
-    if (-not (Ask 'Install PowerShell 7 now?' 'Runs: winget install --id Microsoft.PowerShell --exact')) {
+    if (-not (Ask 'Install PowerShell 7 now?' 'Runs: winget install --id Microsoft.PowerShell --exact' 'installPwsh7')) {
         Write-Host '  Skipped. Install it later with:' -ForegroundColor DarkGray
         Write-Host '    winget install --id Microsoft.PowerShell --exact' -ForegroundColor DarkGray
         return
@@ -124,6 +164,13 @@ function Ensure-Pwsh7 {
 }
 
 function Show-Disclaimer {
+    # Accepted once, recorded with the date. An update does not make you read
+    # and re-accept it - -Reconfigure brings it back.
+    if ($choices.Contains('disclaimerAcceptedAt')) {
+        Write-Host ("  Disclaimer accepted on {0} (-Reconfigure to read it again)." -f $choices['disclaimerAcceptedAt']) `
+            -ForegroundColor DarkGray
+        return
+    }
     Write-Host ''
     Write-Host '  ============================================================' -ForegroundColor Yellow
     Write-Host '   MCPTerminal - PLEASE READ BEFORE INSTALLING' -ForegroundColor Yellow
@@ -151,6 +198,8 @@ function Show-Disclaimer {
         Write-Host '  Aborted - nothing was installed.' -ForegroundColor Yellow
         exit 1
     }
+    $choices['disclaimerAcceptedAt'] = (Get-Date).ToString('yyyy-MM-dd')
+    Save-Choices
 }
 
 function Update-WtProfiles([switch]$Remove) {
@@ -208,6 +257,12 @@ if ($Uninstall) {
 }
 
 # ------------------------------------------------------------------- install
+if ($isUpdate) {
+    Write-Host ''
+    Write-Host '  Updating an existing install - reusing the answers you gave last time.' -ForegroundColor Cyan
+    Write-Host '  Run this with -Reconfigure to be asked again.' -ForegroundColor DarkGray
+    Write-Host ''
+}
 Show-Disclaimer
 
 Write-Host ''
@@ -244,7 +299,7 @@ foreach ($doc in @('LICENSE', 'THIRD-PARTY-NOTICES.md')) {
 }
 Write-Host "  Installed to $installDir" -ForegroundColor Green
 
-if (Ask 'Create a Desktop shortcut?' 'You can right-click it afterwards to pin it to the taskbar.') {
+if (Ask 'Create a Desktop shortcut?' 'You can right-click it afterwards to pin it to the taskbar.' 'desktopShortcut') {
     $lnk = $ws.CreateShortcut($lnkPath)
     $lnk.TargetPath = $exePath
     $lnk.WorkingDirectory = $env:USERPROFILE
@@ -254,14 +309,14 @@ if (Ask 'Create a Desktop shortcut?' 'You can right-click it afterwards to pin i
     Write-Host '  Desktop shortcut created.' -ForegroundColor Green
 }
 
-if (Ask 'Add MCPTerminal profiles to Windows Terminal?' 'Adds PowerShell / CMD / PS5 / Git Bash / WSL entries to the new-tab menu.') {
+if (Ask 'Add MCPTerminal profiles to Windows Terminal?' 'Adds PowerShell / CMD / PS5 / Git Bash / WSL entries to the new-tab menu.' 'wtProfiles') {
     Update-WtProfiles
 }
 
 # Studio (optional app)
 $studioBin = Join-Path $PSScriptRoot '..\studio\bin\Release\net10.0-windows'
 if (Test-Path (Join-Path $studioBin 'MCPTerminalStudio.exe')) {
-    if (Ask 'Install MCPTerminal Studio (terminal manager app)?' 'Tabs per conversation, terminal list with activity, history search. Optional - terminals work without it.') {
+    if (Ask 'Install MCPTerminal Studio (terminal manager app)?' 'Tabs per conversation, terminal list with activity, history search. Optional - terminals work without it.' 'studio') {
         $studioDir = Join-Path $installDir 'Studio'
         New-Item -ItemType Directory -Path $studioDir -Force | Out-Null
         Copy-Item "$studioBin\*" $studioDir -Recurse -Force
@@ -288,7 +343,7 @@ Write-Host '  (Each one you register gets the full-control access described abov
 
 # Claude Code CLI (separate config from Claude Desktop - registering both is fine)
 if (Get-Command claude -ErrorAction SilentlyContinue) {
-    if (Ask 'Register with Claude Code (CLI)?' "Runs: claude mcp add --scope user mcpterminal -- node `"$serverPath`"") {
+    if (Ask 'Register with Claude Code (CLI)?' "Runs: claude mcp add --scope user mcpterminal -- node `"$serverPath`"" 'clientClaudeCode') {
         claude mcp add --scope user mcpterminal -- node $serverPath 2>&1 | Out-Null
         Write-Host '  Claude Code registered (verify with: claude mcp list).' -ForegroundColor Green
     }
@@ -298,26 +353,26 @@ if (Get-Command claude -ErrorAction SilentlyContinue) {
 }
 
 if (Test-Path (Join-Path $env:APPDATA 'Claude')) {
-    if (Ask 'Register with Claude Desktop?' "Adds mcpterminal to $claudeDesktopCfg") {
+    if (Ask 'Register with Claude Desktop?' "Adds mcpterminal to $claudeDesktopCfg" 'clientClaudeDesktop') {
         Register-JsonClient 'Claude Desktop' $claudeDesktopCfg
     }
 } else { Write-Host '  (Claude Desktop not found - skipping)' -ForegroundColor DarkGray }
 
 if (Test-Path (Join-Path $env:USERPROFILE '.cursor')) {
-    if (Ask 'Register with Cursor?' "Adds mcpterminal to $cursorCfg") {
+    if (Ask 'Register with Cursor?' "Adds mcpterminal to $cursorCfg" 'clientCursor') {
         Register-JsonClient 'Cursor' $cursorCfg
     }
 } else { Write-Host '  (Cursor not found - skipping)' -ForegroundColor DarkGray }
 
 if (Test-Path (Join-Path $env:USERPROFILE '.codeium')) {
-    if (Ask 'Register with Windsurf?' "Adds mcpterminal to $windsurfCfg") {
+    if (Ask 'Register with Windsurf?' "Adds mcpterminal to $windsurfCfg" 'clientWindsurf') {
         Register-JsonClient 'Windsurf' $windsurfCfg
     }
 } else { Write-Host '  (Windsurf not found - skipping)' -ForegroundColor DarkGray }
 
 # Assistant routing rules
 $claudeMd = Join-Path $env:USERPROFILE '.claude\CLAUDE.md'
-if (Ask 'Add assistant routing rules to ~\.claude\CLAUDE.md?' 'Tells assistants in EVERY new chat to run shell commands through MCPTerminal. Appends - existing content is preserved.') {
+if (Ask 'Add assistant routing rules to ~\.claude\CLAUDE.md?' 'Tells assistants in EVERY new chat to run shell commands through MCPTerminal. Appends - existing content is preserved.' 'claudeMdRules') {
     $rules = @'
 
 # Shell commands: use MCPTerminal
@@ -361,11 +416,15 @@ Terminals are for commands only - never converse through them.
     }
 }
 
+Save-Choices
+
 Write-Host ''
-Write-Host '  MCPTerminal installed.' -ForegroundColor Cyan
+Write-Host "  MCPTerminal $(if ($isUpdate) { 'updated' } else { 'installed' })." -ForegroundColor Cyan
 Write-Host "    App      : $exePath"
 Write-Host '    Sessions : %LOCALAPPDATA%\MCPTerminal   (plain-text logs - see the disclaimer)'
 Write-Host '    Docs     : README.md, CLAUDE-INSTRUCTIONS.md'
+Write-Host '    Setup    : your answers are remembered - updates reuse them.'
+Write-Host '               Change them with: install.ps1 -Reconfigure' -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  Next: open a terminal, then paste its session code into your assistant.' -ForegroundColor White
 Write-Host '  Assistants pick up the new config on their NEXT session - restart yours.' -ForegroundColor DarkGray
