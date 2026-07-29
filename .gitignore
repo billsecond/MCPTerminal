@@ -10,3 +10,9 @@ AGENT-ACTIVITY-LOG.md
 
 # retired development-era scripts (not part of the product)
 legacy/
+
+# local working notes for AI assistants: house rules, project memory, and the
+# absolute paths of this machine. Useful here, not part of the product - and
+# they must never end up in a public repo.
+.claude/
+CLAUDE.md
